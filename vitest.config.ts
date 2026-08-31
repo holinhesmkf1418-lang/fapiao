@@ -11,5 +11,6 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
+    exclude: ["**/.next/**", "**/node_modules/**"],
   },
 });

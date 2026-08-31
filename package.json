@@ -9,6 +9,9 @@
   "scripts": {
     "dev": "next dev -H 127.0.0.1",
     "build": "next build",
+    "local:install": "node scripts/install.mjs",
+    "local:start": "node scripts/start.mjs",
+    "local:stop": "node scripts/stop.mjs",
     "start": "next start -H 127.0.0.1",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
