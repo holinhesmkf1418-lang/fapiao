@@ -71,3 +71,64 @@ pnpm verify
 ## 担忧
 
 - 当前路径检查按 macOS/Unix 路径语义实现；这是符合本任务的本地 Mac 场景，但没有扩展到 Windows 路径分隔符。
+
+## Fix round 1
+
+### 修复内容
+
+- `src/lib/bootstrap/config.ts` 改为使用产品设计要求的 `config.json` 和 `runtime.json`，补齐 `readRuntimeInfo` / `writeRuntimeInfo`，两类文件都通过 Zod 校验、原子写入并保持 `0600`。
+- `src/lib/bootstrap/paths.ts` 把最近存在祖先的 symlink 校验前移到 `mkdir` 之前，避免不安全 root 先落到 symlink target。
+- `src/lib/logging/logger.ts` 把字段值从“少量黑名单”改成“机器标识符模式”校验：`event`/`stage` 仅允许短小 lowercase snake id，`internalId` 仅允许短 id 或 UUID，`errorCode` 仅允许 uppercase code；生成的 `timestamp` 也校验 ISO-8601。
+
+### 覆盖测试
+
+- `tests/lib/bootstrap/config.test.ts`
+  - `round-trips config.json atomically with mode 0600`
+  - `returns null when runtime.json does not exist`
+  - `round-trips runtime.json atomically with mode 0600`
+  - `rejects invalid runtime config payloads`
+- `tests/lib/bootstrap/paths.test.ts`
+  - `rejects a work root whose ancestor is a symlink without creating target directories`
+- `tests/lib/logging/logger.test.ts`
+  - `rejects secret-looking and OCR-like field values`
+
+### RED 命令与关键输出
+
+```bash
+pnpm vitest run tests/lib/bootstrap/config.test.ts tests/lib/bootstrap/paths.test.ts tests/lib/logging/logger.test.ts
+```
+
+关键输出：
+
+- `ENOENT ... config.json`
+- `promise resolved "null" instead of rejecting`
+- `TypeError: readRuntimeInfo is not a function`
+- `promise resolved "{ ... }" instead of rejecting`
+- `expected [Function] to throw an error`
+
+### GREEN / 验证命令与关键输出
+
+```bash
+pnpm vitest run tests/lib/bootstrap/config.test.ts tests/lib/bootstrap/paths.test.ts tests/lib/logging/logger.test.ts
+pnpm typecheck
+pnpm verify
+git diff --check
+```
+
+关键输出：
+
+- `Test Files 3 passed (3)`
+- `Tests 14 passed (14)`
+- `Test Files 4 passed (4)`
+- `Tests 16 passed (16)`
+- `Compiled successfully`
+- `git diff --check` 无输出
+
+### 本轮修改文件
+
+- `src/lib/bootstrap/config.ts`
+- `src/lib/bootstrap/paths.ts`
+- `src/lib/logging/logger.ts`
+- `tests/lib/bootstrap/config.test.ts`
+- `tests/lib/bootstrap/paths.test.ts`
+- `tests/lib/logging/logger.test.ts`

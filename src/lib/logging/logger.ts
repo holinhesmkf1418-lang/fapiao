@@ -2,12 +2,16 @@ import { appendFileSync, chmodSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 const LOG_FILE_NAME = "app.log";
-const ALLOWED_KEYS = new Set([
-  "event",
-  "internalId",
-  "stage",
-  "errorCode",
-] as const);
+const ALLOWED_KEYS = new Set(["event", "internalId", "stage", "errorCode"] as const);
+const ISO_TIMESTAMP_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
+const EVENT_OR_STAGE_PATTERN = /^[a-z][a-z0-9]*(?:_[a-z0-9]+){0,2}$/;
+const INTERNAL_ID_PATTERNS = [
+  /^[a-z][a-z0-9]*(?:-[a-z0-9]+){0,2}$/,
+  /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/,
+];
+const ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+){0,2}$/;
+const MAX_IDENTIFIER_LENGTH = 64;
 
 export type LocalLogEvent = {
   event: string;
@@ -26,18 +30,20 @@ type StoredLogEvent = LocalLogEvent & {
   timestamp: string;
 };
 
-function assertSafeFieldValue(value: string | undefined): void {
-  if (value === undefined) {
-    return;
+function assertMatchesPattern(
+  value: string | undefined,
+  pattern: RegExp | RegExp[],
+): void {
+  if (value === undefined || value.length > MAX_IDENTIFIER_LENGTH) {
+    if (value === undefined) {
+      return;
+    }
+
+    throw new Error("UNSAFE_LOG_FIELD");
   }
 
-  if (
-    value.includes("/") ||
-    value.includes("\\") ||
-    value.includes("\n") ||
-    value.includes("\r") ||
-    value.includes("~")
-  ) {
+  const patterns = Array.isArray(pattern) ? pattern : [pattern];
+  if (!patterns.some((candidate) => candidate.test(value))) {
     throw new Error("UNSAFE_LOG_FIELD");
   }
 }
@@ -53,13 +59,18 @@ function sanitizeEvent(input: LocalLogEvent): StoredLogEvent {
     throw new Error("UNSAFE_LOG_FIELD");
   }
 
-  assertSafeFieldValue(input.event);
-  assertSafeFieldValue(input.internalId);
-  assertSafeFieldValue(input.stage);
-  assertSafeFieldValue(input.errorCode);
+  assertMatchesPattern(input.event, EVENT_OR_STAGE_PATTERN);
+  assertMatchesPattern(input.internalId, INTERNAL_ID_PATTERNS);
+  assertMatchesPattern(input.stage, EVENT_OR_STAGE_PATTERN);
+  assertMatchesPattern(input.errorCode, ERROR_CODE_PATTERN);
+
+  const timestamp = new Date().toISOString();
+  if (!ISO_TIMESTAMP_PATTERN.test(timestamp)) {
+    throw new Error("UNSAFE_LOG_FIELD");
+  }
 
   return {
-    timestamp: new Date().toISOString(),
+    timestamp,
     event: input.event,
     internalId: input.internalId ?? "",
     stage: input.stage ?? "",

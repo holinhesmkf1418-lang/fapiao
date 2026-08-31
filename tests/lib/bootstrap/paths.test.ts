@@ -1,6 +1,6 @@
 /* @vitest-environment node */
 
-import { mkdtemp, mkdir, rm, symlink } from "node:fs/promises";
+import { access, mkdtemp, mkdir, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -62,4 +62,20 @@ it("creates the required workspace directories for a missing work root", async (
     backups: join(root, "backups"),
     logs: join(root, "logs"),
   });
+});
+
+it("rejects a work root whose ancestor is a symlink without creating target directories", async () => {
+  const base = await mkdtemp(join(tmpdir(), "invoice-workspace-symlink-"));
+  const target = join(base, "target");
+  const link = join(base, "link");
+  const unsafeRoot = join(link, "workspace");
+  cleanupRoots.push(base);
+
+  await mkdir(target, { recursive: true });
+  await symlink(target, link);
+
+  await expect(ensureWorkRoot(unsafeRoot)).rejects.toThrowError(
+    "PATH_OUTSIDE_WORK_ROOT",
+  );
+  await expect(access(join(target, "workspace"))).rejects.toThrow();
 });

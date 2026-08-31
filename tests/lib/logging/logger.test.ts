@@ -26,6 +26,32 @@ it("rejects sensitive and unregistered log fields", async () => {
   ).toThrowError("UNSAFE_LOG_FIELD");
 });
 
+it("rejects secret-looking and OCR-like field values", async () => {
+  const logDir = await mkdtemp(join(tmpdir(), "invoice-logs-secret-"));
+  cleanupRoots.push(logDir);
+
+  const logger = createLogger(logDir);
+
+  expect(() =>
+    logger.error({
+      event: "job_failed",
+      errorCode: "sk-live-secret-token",
+    }),
+  ).toThrowError("UNSAFE_LOG_FIELD");
+  expect(() =>
+    logger.warn({
+      event: "job_failed",
+      internalId: "票面内容",
+    }),
+  ).toThrowError("UNSAFE_LOG_FIELD");
+  expect(() =>
+    logger.info({
+      event: "job_failed",
+      stage: "bootstrap failed",
+    }),
+  ).toThrowError("UNSAFE_LOG_FIELD");
+});
+
 it("writes newline-delimited json with only approved fields", async () => {
   const logDir = await mkdtemp(join(tmpdir(), "invoice-logs-write-"));
   cleanupRoots.push(logDir);

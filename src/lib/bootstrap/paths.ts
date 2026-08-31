@@ -90,6 +90,7 @@ export async function ensureWorkRoot(root: string): Promise<WorkPaths> {
   }
 
   const absoluteRoot = resolve(root);
+  resolveExistingParent(absoluteRoot);
   mkdirSync(absoluteRoot, { recursive: true });
 
   const paths = {
