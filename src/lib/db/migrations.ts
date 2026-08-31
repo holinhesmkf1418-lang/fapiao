@@ -162,7 +162,7 @@ function formatBackupTimestamp(date: Date): string {
   return date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
 }
 
-function backupDatabase(db: LocalDatabase): Promise<void> {
+async function backupDatabase(db: LocalDatabase): Promise<void> {
   const backupDir = join(deriveWorkRoot(db.file), "backups");
   mkdirSync(backupDir, { recursive: true });
 
@@ -171,7 +171,7 @@ function backupDatabase(db: LocalDatabase): Promise<void> {
     `pre-migration-${formatBackupTimestamp(new Date())}.sqlite`,
   );
 
-  return db.sqlite.backup(backupFile).then(() => undefined);
+  await db.sqlite.backup(backupFile);
 }
 
 function applyVersionOne(sqlite: Database.Database): void {
@@ -190,7 +190,7 @@ function runMigrationTransaction(db: LocalDatabase, currentVersion: number): voi
   transaction.immediate(currentVersion);
 }
 
-export function migrateDatabase(db: LocalDatabase): void | Promise<void> {
+export async function migrateDatabase(db: LocalDatabase): Promise<void> {
   const currentVersion = readSchemaVersion(db.sqlite);
   if (currentVersion === CURRENT_SCHEMA_VERSION) {
     return;
@@ -203,9 +203,9 @@ export function migrateDatabase(db: LocalDatabase): void | Promise<void> {
   const hasExistingSchema = tableExists(db.sqlite, "schema_migrations");
 
   if (hasExistingSchema) {
-    return backupDatabase(db).then(() => {
-      runMigrationTransaction(db, currentVersion);
-    });
+    await backupDatabase(db);
+    runMigrationTransaction(db, currentVersion);
+    return;
   }
 
   runMigrationTransaction(db, currentVersion);

@@ -6,8 +6,6 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { openDatabase } from "@/lib/db/client";
-import { migrateDatabase } from "@/lib/db/migrations";
-import type { LocalDatabase } from "@/lib/db/types";
 
 const cleanupRoots: string[] = [];
 
@@ -17,25 +15,12 @@ afterEach(async () => {
   );
 });
 
-function createLocalDatabase(file: string): LocalDatabase {
-  const sqlite = new Database(file);
-
-  return {
-    file,
-    sqlite,
-    close() {
-      sqlite.close();
-    },
-  };
-}
-
 it("creates the v1 tables once even when migrations are re-run", async () => {
   // Regression guard: app restarts must not duplicate schema metadata or skip required tables.
   const tempRoot = await mkdtemp(join(tmpdir(), "invoice-db-migrate-"));
   cleanupRoots.push(tempRoot);
 
-  const db = openDatabase(join(tempRoot, "workbench.sqlite"));
-  migrateDatabase(db);
+  const db = await openDatabase(join(tempRoot, "workbench.sqlite"));
 
   const tables = db.sqlite
     .prepare<[], { name: string }>(
@@ -72,7 +57,7 @@ it("rejects invalid status values and preserves integer cents exactly", async ()
   const tempRoot = await mkdtemp(join(tmpdir(), "invoice-db-constraints-"));
   cleanupRoots.push(tempRoot);
 
-  const db = openDatabase(join(tempRoot, "workbench.sqlite"));
+  const db = await openDatabase(join(tempRoot, "workbench.sqlite"));
 
   db.sqlite
     .prepare(
@@ -156,7 +141,7 @@ it("creates a pre-migration backup only for an existing older schema", async () 
   const tempRoot = await mkdtemp(join(tmpdir(), "invoice-db-backup-"));
   cleanupRoots.push(tempRoot);
 
-  const freshDb = openDatabase(join(tempRoot, "fresh", "workbench.sqlite"));
+  const freshDb = await openDatabase(join(tempRoot, "fresh", "workbench.sqlite"));
   freshDb.close();
 
   const freshBackupEntries = await readdir(join(tempRoot, "fresh", "backups")).catch(() => []);
@@ -164,8 +149,8 @@ it("creates a pre-migration backup only for an existing older schema", async () 
 
   const legacyFile = join(tempRoot, "legacy", "data", "workbench.sqlite");
   await mkdir(dirname(legacyFile), { recursive: true });
-  const legacyDb = createLocalDatabase(legacyFile);
-  legacyDb.sqlite.exec(`
+  const legacyDb = new Database(legacyFile);
+  legacyDb.exec(`
     create table schema_migrations (
       version integer primary key not null
     );
@@ -178,12 +163,22 @@ it("creates a pre-migration backup only for an existing older schema", async () 
   `);
   legacyDb.close();
 
-  const upgradedDb = createLocalDatabase(legacyFile);
-  await migrateDatabase(upgradedDb);
+  const upgradedDb = await openDatabase(legacyFile);
 
   const backupFiles = await readdir(join(tempRoot, "legacy", "backups"));
   expect(backupFiles).toHaveLength(1);
   expect(backupFiles[0]).toMatch(/^pre-migration-\d{8}T\d{6}Z\.sqlite$/);
+  const backupDb = new Database(join(tempRoot, "legacy", "backups", backupFiles[0]), {
+    readonly: true,
+    fileMustExist: true,
+  });
+
+  expect(backupDb.prepare("select version from schema_migrations").get()).toEqual({
+    version: 0,
+  });
+  expect(backupDb.prepare("select note from legacy_notes where id = ?").get("note-1")).toEqual({
+    note: "keep me",
+  });
   expect(
     upgradedDb.sqlite.prepare("select note from legacy_notes where id = ?").get("note-1"),
   ).toEqual({ note: "keep me" });
@@ -191,5 +186,6 @@ it("creates a pre-migration backup only for an existing older schema", async () 
     version: 1,
   });
 
+  backupDb.close();
   upgradedDb.close();
 });

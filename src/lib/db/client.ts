@@ -6,7 +6,7 @@ import { migrateDatabase } from "@/lib/db/migrations";
 import * as schema from "@/lib/db/schema";
 import type { DatabaseHealth, LocalDatabase } from "@/lib/db/types";
 
-export function openDatabase(file: string): LocalDatabase {
+export async function openDatabase(file: string): Promise<LocalDatabase> {
   mkdirSync(dirname(file), { recursive: true });
 
   const sqlite = new Database(file);
@@ -23,13 +23,13 @@ export function openDatabase(file: string): LocalDatabase {
     },
   };
 
-  const migrationResult = migrateDatabase(db);
-  if (migrationResult instanceof Promise) {
+  try {
+    await migrateDatabase(db);
+    return db;
+  } catch (error) {
     db.close();
-    throw new Error("DATABASE_REQUIRES_ASYNC_MIGRATION");
+    throw error;
   }
-
-  return db;
 }
 
 export function checkDatabase(db: LocalDatabase): DatabaseHealth {
