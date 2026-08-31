@@ -1,0 +1,1855 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src 'unsafe-inline' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>发票工作台交互原型</title>
+<style>:root{color-scheme:light dark;background:light-dark(rgb(255 255 255), rgb(24 24 24))}html,body{margin:0}body{box-sizing:border-box;padding:1rem;background:inherit}iframe{display:block;width:100%;height:calc(100vh - 2rem);margin:0 auto;border:0}</style>
+</head>
+<body>
+<iframe sandbox="allow-scripts" referrerpolicy="no-referrer" title="发票工作台交互原型" srcdoc="&lt;!doctype html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;
+&lt;meta http-equiv=&quot;Content-Security-Policy&quot; content=&quot;default-src &#x27;none&#x27;; script-src &#x27;unsafe-inline&#x27; &#x27;unsafe-eval&#x27; &#x27;wasm-unsafe-eval&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src &#x27;unsafe-inline&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src &#x27;none&#x27;; object-src &#x27;none&#x27;; base-uri &#x27;none&#x27;; form-action &#x27;none&#x27;&quot;&gt;
+&lt;title&gt;发票工作台交互原型&lt;/title&gt;
+&lt;style&gt;:root {
+  color-scheme: light dark;
+  background-color: var(
+    --background,
+    var(--color-background-primary, light-dark(rgb(255 255 255), rgb(24 24 24)))
+  ) !important;
+
+  /* Agent-facing contract; keep in sync with SKILL.md. */
+  --background: var(
+    --color-background-primary,
+    light-dark(rgb(255 255 255), rgb(24 24 24))
+  );
+  --foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --card: color-mix(in oklab, var(--foreground) 5%, var(--background));
+  --card-foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --popover: var(
+    --color-background-secondary,
+    light-dark(rgb(255 255 255), rgb(45 45 45))
+  );
+  --popover-foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --primary: var(
+    --color-text-info,
+    light-dark(rgb(51 156 255), rgb(131 195 255))
+  );
+  --primary-foreground: var(
+    --color-text-inverse,
+    light-dark(rgb(255 255 255), rgb(13 13 13))
+  );
+  --secondary: var(
+    --color-background-secondary,
+    light-dark(rgb(255 255 255 / 96%), rgb(54 54 54 / 96%))
+  );
+  --secondary-foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --muted: color-mix(in srgb, var(--foreground) 10%, transparent);
+  --muted-foreground: var(
+    --color-text-secondary,
+    light-dark(rgb(26 28 31 / 49.4%), rgb(255 255 255 / 49.8%))
+  );
+  --accent: var(
+    --color-background-info,
+    light-dark(rgb(229 242 255), rgb(13 39 63))
+  );
+  --accent-foreground: var(
+    --color-text-info,
+    light-dark(rgb(51 156 255), rgb(131 195 255))
+  );
+  --destructive: var(
+    --color-text-warning,
+    light-dark(rgb(226 85 7), rgb(255 133 73))
+  );
+  --border: var(
+    --color-border-secondary,
+    light-dark(rgb(26 28 31 / 8%), rgb(255 255 255 / 8.2%))
+  );
+  --input: var(
+    --color-border-primary,
+    light-dark(
+      rgb(26 28 31 / 11.8%),
+      color-mix(in oklab, rgb(0 0 0) 10%, transparent)
+    )
+  );
+  --ring: var(
+    --color-ring-primary,
+    light-dark(rgb(51 156 255), rgb(131 195 255 / 76%))
+  );
+  --font-size-base: var(--font-text-md-size, 14px);
+  --blue: light-dark(rgb(51 156 255), rgb(51 156 255));
+  --orange: light-dark(rgb(226 85 7), rgb(251 106 34));
+  --green: light-dark(rgb(0 162 64), rgb(64 201 119));
+  --red: light-dark(rgb(224 46 42), rgb(255 103 100));
+  --purple: light-dark(rgb(146 79 247), rgb(173 123 249));
+  --yellow: light-dark(rgb(255 195 0), rgb(255 210 64));
+  --viz-series-1: var(--primary);
+  --viz-series-2: light-dark(rgb(243 136 59), rgb(245 154 86));
+  --viz-series-3: light-dark(rgb(93 201 119), rgb(116 213 139));
+  --viz-series-4: light-dark(rgb(235 119 177), rgb(240 143 192));
+  --viz-series-5: light-dark(rgb(155 121 236), rgb(170 145 239));
+  --viz-series-6: light-dark(rgb(58 185 177), rgb(90 203 194));
+
+  /* Internal implementation variables; not part of the agent contract. */
+  --font-sans: -apple-system, system-ui, &quot;Segoe UI&quot;, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, &quot;SF Mono&quot;, Menlo, Consolas, &quot;Liberation Mono&quot;,
+    monospace;
+  --font-size-normal: max(11px, var(--font-size-base));
+  --font-size-tooltip: calc(var(--font-size-base) - 1px);
+  --font-size-small: max(11px, calc(var(--font-size-base) - 2px));
+  --font-size-h1: calc(var(--font-size-normal) * 1.7142857143);
+  --font-size-h2: calc(var(--font-size-normal) * 1.4285714286);
+  --font-size-h3: calc(var(--font-size-normal) * 1.2857142857);
+  --font-weight-normal: 430;
+  --font-weight-medium: 500;
+  --line-height-normal: calc(var(--font-size-normal) * 1.5);
+  --line-height-tooltip: calc(var(--font-size-tooltip) * 1.4285714286);
+  --line-height-small: calc(var(--font-size-small) + 4px);
+  --radius: var(--border-radius-lg, 12.5px);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-2xl: calc(var(--radius) * 1.6);
+  --radius-full: 9999px;
+  --shadow-sm: 0 1px 2px -1px rgb(0 0 0 / 8%);
+  --checkmark-image: url(&quot;data:image/svg+xml,%3Csvg xmlns=&#x27;http://www.w3.org/2000/svg&#x27; viewBox=&#x27;0 0 17 17&#x27;%3E%3Cpath d=&#x27;M12.8961 3.64101C13.1297 3.41418 13.4984 3.37523 13.7779 3.56581C14.0571 3.75635 14.1554 4.11331 14.0299 4.41347L13.9615 4.53847L7.71151 13.7045C7.59411 13.8767 7.4063 13.9877 7.19881 14.0072C6.99136 14.0267 6.78564 13.9533 6.63826 13.806L2.88826 10.056L2.79842 9.9457C2.6192 9.67407 2.64927 9.30496 2.88826 9.06581C3.12738 8.82669 3.49647 8.79676 3.76815 8.97597L3.8785 9.06581L7.03084 12.2182L12.8053 3.74941L12.8961 3.64101Z&#x27;/%3E%3C/svg%3E&quot;);
+
+  /* Legacy aliases; not part of the current agent contract. */
+  --viz-bg: transparent;
+  --viz-panel: var(--card);
+  --viz-border: var(--border);
+  --viz-text: var(--foreground);
+  --viz-muted: var(--muted-foreground);
+  --viz-accent: var(--primary);
+  --viz-accent-text: var(--primary-foreground);
+  --viz-accent-bg: var(--accent);
+  --viz-font-size: var(--font-size-base);
+  --viz-warning: var(--destructive);
+}
+
+:root[data-theme=&quot;light&quot;] {
+  color-scheme: light;
+}
+
+:root[data-theme=&quot;dark&quot;] {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html &gt; body {
+  /* Preserve MCP aliases for older inline renderers without creating :root cycles. */
+  --color-background-primary: var(
+    --background,
+    light-dark(rgb(255 255 255), rgb(24 24 24))
+  );
+  --color-text-primary: var(
+    --foreground,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --color-border-secondary: var(
+    --border,
+    light-dark(rgb(26 28 31 / 8%), rgb(255 255 255 / 8.2%))
+  );
+
+  margin: 0;
+  padding: 5px;
+  color: var(--foreground);
+  background: transparent !important;
+  font-family: var(--font-sans) !important;
+  font-size: var(--font-size-normal);
+  font-weight: var(--font-weight-normal);
+  line-height: var(--line-height-normal);
+}
+
+a {
+  color: color-mix(in srgb, var(--viz-accent) 80%, var(--viz-text) 20%);
+  cursor: pointer;
+  font-weight: var(--font-weight-medium, 500);
+  text-decoration: none;
+  text-underline-offset: 2px;
+}
+
+a:is(:hover, :focus-visible) {
+  text-decoration-line: underline;
+  text-decoration-style: dashed;
+  text-decoration-thickness: 0.5px;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p {
+  margin-block: 0;
+}
+
+h1 {
+  font-size: var(--font-size-h1);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+h2 {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+h3,
+h4,
+h5,
+h6 {
+  font-size: var(--font-size-h3);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.3;
+}
+
+b,
+strong,
+th {
+  font-weight: var(--font-weight-medium);
+}
+
+code:not(pre code) {
+  display: inline;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  corner-shape: superellipse(1.5);
+  background: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  word-break: break-word;
+}
+
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--foreground);
+  font: inherit;
+  text-align: start;
+}
+
+.table :is(th, td) {
+  padding-block: 10px;
+  padding-inline: 0 24px;
+  overflow-wrap: anywhere;
+  border-bottom: 1px solid var(--border);
+  text-align: start;
+  vertical-align: top;
+}
+
+.table-responsive &gt; .table :is(th, td) {
+  overflow-wrap: break-word;
+}
+
+.table :is(th, td):last-child {
+  padding-inline-end: 0;
+}
+
+.table :is(caption, thead th) {
+  font-weight: 600;
+}
+
+.table thead th {
+  padding-block: 8px;
+  border-bottom-color: color-mix(in srgb, var(--foreground) 16%, transparent);
+}
+
+.table tbody tr:last-child :is(th, td) {
+  border-bottom: 0;
+}
+
+.table.table-sm :is(th, td) {
+  padding-block: 6px;
+}
+
+.table.table-sm :is(th, td):not(:last-child) {
+  padding-inline-end: 16px;
+}
+
+.table :is(.text-end, [align=&quot;right&quot;]) {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.table :is(.text-center, [align=&quot;center&quot;]) {
+  text-align: center;
+}
+
+.table .text-nowrap {
+  white-space: nowrap;
+}
+
+#widget {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  padding: 0;
+  background: transparent !important;
+}
+
+.card {
+  min-width: 0;
+  padding: 12px;
+  overflow: hidden;
+  overflow-wrap: break-word;
+  border-radius: var(--radius-2xl);
+  corner-shape: superellipse(1.5);
+  color: var(--card-foreground);
+  background: var(--card);
+}
+
+#widget &gt; :not(.card, .progress) {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.tooltip {
+  position: fixed;
+  z-index: 50;
+  top: 0;
+  left: 0;
+  width: max-content;
+  max-width: min(
+    20rem,
+    var(--tooltip-available-width, calc(100vw - 10px)),
+    calc(100vw - 10px)
+  );
+  max-height: min(
+    var(--tooltip-available-height, calc(100vh - 10px)),
+    calc(100vh - 10px)
+  );
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--popover-foreground);
+  background: var(--popover);
+  box-shadow: none;
+  font-size: var(--font-size-tooltip);
+  line-height: var(--line-height-tooltip);
+  overflow-wrap: break-word;
+  white-space: normal;
+  pointer-events: none;
+  user-select: none;
+}
+
+.viz-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(max(180px, 24%), 1fr));
+  gap: 10px;
+}
+
+.viz-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.viz-stat-value {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+.viz-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.progress {
+  display: flex;
+  height: 6px;
+  margin-block: calc((var(--line-height-normal, 1.5em) - 6px) / 2);
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--muted);
+}
+
+.progress-bar {
+  height: 100%;
+  flex-shrink: 0;
+  border: 0;
+  background: var(--viz-series-1);
+}
+
+.viz-badge {
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  color: var(--accent-foreground);
+  background: var(--accent);
+  font-weight: var(--font-weight-medium);
+}
+
+small,
+.text-small,
+.viz-badge {
+  font-size: var(--font-size-small);
+  line-height: var(--line-height-small);
+}
+
+.text-muted {
+  color: var(--muted-foreground);
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.viz-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.viz-controls &gt; .form-label {
+  display: grid;
+  min-width: min(100%, 260px);
+  flex: 1 1 280px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 2px 12px;
+  margin-bottom: 0;
+}
+
+.viz-controls &gt; .form-label &gt; :is(.form-control, .form-range, .form-select) {
+  grid-column: 1 / -1;
+}
+
+.btn,
+.form-check-input,
+.form-control,
+.form-range,
+.form-select {
+  font: inherit;
+}
+
+.btn {
+  appearance: button;
+  display: inline-flex;
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0 8px;
+  -webkit-app-region: no-drag;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  cursor: var(--cursor-interaction, pointer);
+  text-align: center;
+  text-decoration: none;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+.btn:is(.btn-block, .viz-tile) {
+  inline-size: 100%;
+}
+
+.btn.viz-tile {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+a.btn {
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.btn:not(:disabled):hover {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.btn-primary {
+  border-color: transparent;
+  color: var(--primary-foreground);
+  background: var(--foreground);
+  background-clip: padding-box;
+}
+
+.btn-primary .text-muted {
+  color: color-mix(in srgb, var(--primary-foreground) 50%, transparent);
+}
+
+.btn-primary:not(:disabled):hover {
+  background: color-mix(in srgb, var(--foreground) 80%, transparent);
+  background-clip: padding-box;
+}
+
+.btn-ghost {
+  border-color: transparent;
+  color: var(--muted-foreground);
+  background: transparent;
+}
+
+.btn-ghost:not(:disabled):hover {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+[data-lucide] {
+  stroke-width: 1.6;
+}
+
+.form-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--foreground);
+}
+
+.form-control {
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  outline: none;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--foreground);
+  background: var(--secondary);
+}
+
+.form-control::placeholder {
+  color: var(--muted-foreground);
+}
+
+.form-control[type=&quot;file&quot;] {
+  padding: 0;
+  overflow: hidden;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.form-control[type=&quot;file&quot;]::file-selector-button {
+  min-height: 26px;
+  margin-right: 8px;
+  padding: 0 8px;
+  border: 0;
+  border-right: 1px solid var(--input);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  cursor: inherit;
+  font: inherit;
+}
+
+.form-control[type=&quot;file&quot;]:not(:disabled):hover::file-selector-button {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.form-control-color[type=&quot;color&quot;] {
+  width: 40px;
+  height: 28px;
+  padding: 3px;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.form-control-color[type=&quot;color&quot;]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.form-control-color[type=&quot;color&quot;]::-webkit-color-swatch {
+  border: 0;
+  border-radius: calc(var(--radius-lg) - 4px);
+  corner-shape: superellipse(1.5);
+}
+
+textarea.form-control {
+  height: auto;
+  min-height: 72px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+
+.form-control:focus-visible {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-control:disabled,
+.form-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.form-select {
+  appearance: none;
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  margin: 0;
+  padding: 0 32px 0 8px;
+  outline: none;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--foreground);
+  background-color: var(--secondary);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted-foreground) 50%),
+    linear-gradient(135deg, var(--muted-foreground) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 50%,
+    calc(100% - 10px) 50%;
+  background-repeat: no-repeat;
+  background-size: 4px 4px;
+  cursor: var(--cursor-interaction, default);
+}
+
+.form-select:not(:disabled):hover {
+  background-color: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.form-select:focus-visible {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-check {
+  display: flex;
+  min-height: 20px;
+  align-items: center;
+  gap: 6px;
+}
+
+.form-check-input {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  margin: 0;
+  border: 1px solid var(--input);
+  color: var(--primary-foreground);
+  background-color: transparent;
+  cursor: var(--cursor-interaction, default);
+  transition:
+    background-color 150ms,
+    border-color 150ms,
+    box-shadow 150ms;
+}
+
+.form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;] {
+  border-color: var(--input);
+  border-radius: var(--radius-sm);
+  corner-shape: superellipse(1.5);
+  background-color: var(--secondary);
+  box-shadow: var(--shadow-sm);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input:not(:disabled):not(:checked):hover {
+  background-color: var(--card);
+}
+
+.form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;]:checked {
+  border-color: var(--primary);
+  background-color: var(--primary);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input[type=&quot;checkbox&quot;]:checked::before {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--primary-foreground);
+  content: &quot;&quot;;
+  mask: var(--checkmark-image) center / 12px 12px no-repeat;
+}
+
+.form-check-input[type=&quot;radio&quot;] {
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-full);
+}
+
+.form-check-input[type=&quot;radio&quot;]:checked {
+  border: 2px solid var(--primary);
+  background:
+    radial-gradient(circle, var(--primary-foreground) 0 2.5px, transparent 3px),
+    var(--primary);
+}
+
+.form-check:not(.form-switch) .form-check-input:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled {
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+}
+
+.form-switch .form-check-input:disabled,
+.form-switch .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.form-check-label {
+  color: var(--foreground);
+  cursor: var(--cursor-interaction, default);
+}
+
+.form-switch .form-check-input {
+  position: relative;
+  width: 32px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--muted);
+  box-shadow: none;
+  transition: background-color 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.form-switch .form-check-input::before {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  border: 1px solid light-dark(var(--primary-foreground), var(--foreground));
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+  box-shadow: var(--shadow-sm);
+  content: &quot;&quot;;
+  transform: translate(2px, -50%);
+  transition: transform 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.form-switch .form-check-input:checked {
+  background: var(--primary);
+}
+
+.form-switch .form-check-input:checked::before {
+  transform: translate(14px, -50%);
+}
+
+.form-switch .form-check-input:focus-visible {
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+.form-range {
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 28px;
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  outline: none;
+  border: 0;
+  accent-color: var(--primary);
+  background: linear-gradient(
+      color-mix(in srgb, var(--foreground) 7%, transparent),
+      color-mix(in srgb, var(--foreground) 7%, transparent)
+    )
+    center / 100% 2px no-repeat;
+}
+
+.form-range::-webkit-slider-runnable-track {
+  height: 28px;
+  background: transparent;
+}
+
+.form-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+}
+
+.form-range:focus-visible::-webkit-slider-thumb {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-range::-moz-range-track {
+  height: 28px;
+  background: transparent;
+}
+
+.form-range::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+}
+
+.form-range:focus-visible::-moz-range-thumb {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-range:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.btn:not(.btn-primary, .viz-tile):is(
+  [aria-pressed=&quot;true&quot;],
+  [aria-selected=&quot;true&quot;],
+  .is-selected
+) {
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+  background: var(--primary);
+}
+
+.btn.viz-tile:is([aria-pressed=&quot;true&quot;], [aria-selected=&quot;true&quot;], .is-selected) {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+@media (pointer: coarse) {
+  .btn,
+  .form-control,
+  .form-select {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .form-control,
+  .form-select {
+    font-size: max(16px, var(--font-size-normal));
+  }
+
+  .form-control[type=&quot;file&quot;]::file-selector-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .form-control-color[type=&quot;color&quot;] {
+    width: 44px;
+    height: 44px;
+  }
+
+  .form-control:is(
+    [type=&quot;date&quot;],
+    [type=&quot;datetime-local&quot;],
+    [type=&quot;month&quot;],
+    [type=&quot;time&quot;],
+    [type=&quot;week&quot;]
+  ) {
+    min-width: 0;
+    max-width: 100%;
+    padding-block: 8px;
+  }
+
+  .form-check {
+    min-height: 44px;
+    padding-inline: 15px;
+  }
+
+  .form-check-input {
+    position: relative;
+  }
+
+  .form-check-input::after {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 44px;
+    height: 44px;
+    content: &quot;&quot;;
+    transform: translate(-50%, -50%);
+  }
+
+  .form-check-label {
+    display: inline-flex;
+    min-width: 44px;
+    min-height: 44px;
+    align-items: center;
+  }
+
+  .form-range {
+    height: 44px;
+    touch-action: pan-y;
+  }
+
+  .form-range::-webkit-slider-runnable-track {
+    height: 44px;
+  }
+
+  .form-range::-moz-range-track {
+    height: 44px;
+  }
+
+  .form-range::-webkit-slider-thumb {
+    margin-top: 12px;
+  }
+}
+
+svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+#widget &gt; svg {
+  width: 100%;
+}
+
+/* Model-authored chart rules can otherwise stretch icons after these styles load. */
+svg.lucide {
+  display: block;
+  width: 16px !important;
+  height: 16px !important;
+  flex: none;
+  margin: 0 !important;
+  stroke-width: 1.6;
+}
+
+.text-warning,
+.text-destructive {
+  color: var(--destructive);
+}
+
+html&gt;body{padding:0}&lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;style&gt;
+  #invoice-workbench-preview {
+    color-scheme: light dark;
+    width: 100%;
+    font-family: Inter, &quot;PingFang SC&quot;, &quot;Microsoft YaHei&quot;, system-ui, -apple-system, sans-serif;
+    color: light-dark(#172033, #ecf2ff);
+  }
+
+  #invoice-workbench-preview * { box-sizing: border-box; }
+  #invoice-workbench-preview button { font: inherit; }
+
+  #invoice-workbench-preview .iw-window {
+    width: 100%;
+    min-height: 720px;
+    display: grid;
+    grid-template-columns: 216px minmax(0, 1fr);
+    overflow: hidden;
+    border: 1px solid light-dark(#dfe5ef, #27334a);
+    border-radius: 18px;
+    background: light-dark(#f6f8fc, #0e1421);
+    box-shadow: 0 24px 70px light-dark(rgba(30, 53, 88, .12), rgba(0, 0, 0, .3));
+  }
+
+  #invoice-workbench-preview .iw-sidebar {
+    padding: 24px 16px;
+    border-right: 1px solid light-dark(#e6eaf1, #263148);
+    background: light-dark(#ffffff, #121a2a);
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+
+  #invoice-workbench-preview .iw-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 8px;
+    font-weight: 780;
+    letter-spacing: -.02em;
+  }
+
+  #invoice-workbench-preview .iw-logo {
+    width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    border-radius: 10px;
+    color: white;
+    background: linear-gradient(145deg, #2f69ff, #6755f5);
+    box-shadow: 0 8px 18px rgba(61, 96, 247, .28);
+  }
+
+  #invoice-workbench-preview .iw-nav {
+    display: grid;
+    gap: 6px;
+  }
+
+  #invoice-workbench-preview .iw-nav-button {
+    width: 100%;
+    border: 0;
+    border-radius: 10px;
+    padding: 10px 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: light-dark(#667085, #9eabc1);
+    background: transparent;
+    cursor: pointer;
+    text-align: left;
+  }
+
+  #invoice-workbench-preview .iw-nav-button:hover {
+    background: light-dark(#f1f4fa, #192338);
+  }
+
+  #invoice-workbench-preview .iw-nav-button[aria-current=&quot;page&quot;] {
+    color: light-dark(#244fc7, #aebfff);
+    background: light-dark(#edf2ff, #1c2a50);
+    font-weight: 650;
+  }
+
+  #invoice-workbench-preview .iw-nav-icon {
+    width: 24px;
+    text-align: center;
+    font-size: 16px;
+  }
+
+  #invoice-workbench-preview .iw-sidebar-note {
+    margin-top: auto;
+    padding: 12px;
+    border: 1px solid light-dark(#e2e7f0, #2b3850);
+    border-radius: 12px;
+    background: light-dark(#f8faff, #172135);
+    color: light-dark(#5e6a7c, #a7b3c7);
+    font-size: 12px;
+    line-height: 1.55;
+  }
+
+  #invoice-workbench-preview .iw-main {
+    min-width: 0;
+    padding: 25px 28px 32px;
+  }
+
+  #invoice-workbench-preview .iw-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    margin-bottom: 24px;
+  }
+
+  #invoice-workbench-preview .iw-heading h1 {
+    margin: 0 0 5px;
+    font-size: 24px;
+    line-height: 1.2;
+    letter-spacing: -.03em;
+  }
+
+  #invoice-workbench-preview .iw-heading p {
+    margin: 0;
+    color: light-dark(#768195, #95a2b7);
+    font-size: 13px;
+  }
+
+  #invoice-workbench-preview .iw-primary {
+    border: 0;
+    border-radius: 10px;
+    padding: 10px 16px;
+    color: white;
+    background: #3769ee;
+    box-shadow: 0 8px 20px rgba(55, 105, 238, .23);
+    cursor: pointer;
+    font-weight: 650;
+    white-space: nowrap;
+  }
+
+  #invoice-workbench-preview .iw-primary:hover { background: #2d5bd1; }
+
+  #invoice-workbench-preview .iw-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 14px;
+    margin-bottom: 14px;
+  }
+
+  #invoice-workbench-preview .iw-metric,
+  #invoice-workbench-preview .iw-panel {
+    border: 1px solid light-dark(#e2e7ef, #27344b);
+    background: light-dark(#ffffff, #141d2e);
+    border-radius: 14px;
+  }
+
+  #invoice-workbench-preview .iw-metric { padding: 16px; }
+
+  #invoice-workbench-preview .iw-metric-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: light-dark(#788397, #9aa7ba);
+    font-size: 12px;
+  }
+
+  #invoice-workbench-preview .iw-metric-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+  }
+
+  #invoice-workbench-preview .iw-metric-value {
+    margin-top: 9px;
+    font-size: 23px;
+    font-weight: 760;
+    letter-spacing: -.03em;
+  }
+
+  #invoice-workbench-preview .iw-metric-hint {
+    margin-top: 5px;
+    color: light-dark(#8993a4, #8997ad);
+    font-size: 11px;
+  }
+
+  #invoice-workbench-preview .iw-dashboard-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.55fr) minmax(270px, .85fr);
+    gap: 14px;
+  }
+
+  #invoice-workbench-preview .iw-panel { padding: 18px; }
+
+  #invoice-workbench-preview .iw-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 18px;
+  }
+
+  #invoice-workbench-preview .iw-panel-title {
+    font-size: 14px;
+    font-weight: 700;
+  }
+
+  #invoice-workbench-preview .iw-select {
+    border: 1px solid light-dark(#dde3ec, #303d54);
+    border-radius: 8px;
+    padding: 6px 9px;
+    color: light-dark(#5d687a, #acb8ca);
+    background: light-dark(#ffffff, #182235);
+    font-size: 11px;
+  }
+
+  #invoice-workbench-preview .iw-month-chart {
+    height: 178px;
+    display: grid;
+    grid-template-columns: 32px minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  #invoice-workbench-preview .iw-y-axis {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    color: light-dark(#939dad, #7e8ca2);
+    font-size: 9px;
+    padding-bottom: 22px;
+  }
+
+  #invoice-workbench-preview .iw-bars-area {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 13px;
+    align-items: end;
+    padding: 0 5px 22px;
+    background: repeating-linear-gradient(to bottom, light-dark(#eef1f6, #243047) 0 1px, transparent 1px 39px);
+  }
+
+  #invoice-workbench-preview .iw-bar-group {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: end;
+    align-items: center;
+    gap: 7px;
+  }
+
+  #invoice-workbench-preview .iw-bar-stack {
+    width: min(28px, 72%);
+    display: flex;
+    flex-direction: column-reverse;
+    border-radius: 6px 6px 3px 3px;
+    overflow: hidden;
+    box-shadow: 0 4px 12px rgba(42, 84, 190, .12);
+  }
+
+  #invoice-workbench-preview .iw-bar-stack span { display: block; }
+  #invoice-workbench-preview .iw-bar-stack span:nth-child(1) { background: #3869eb; }
+  #invoice-workbench-preview .iw-bar-stack span:nth-child(2) { background: #6f91f1; }
+  #invoice-workbench-preview .iw-bar-stack span:nth-child(3) { background: #9fb4ef; }
+
+  #invoice-workbench-preview .iw-month-label {
+    position: absolute;
+    bottom: 2px;
+    color: light-dark(#778397, #9aa7ba);
+    font-size: 10px;
+  }
+
+  #invoice-workbench-preview .iw-legend {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+    color: light-dark(#788397, #9aa7ba);
+    font-size: 10px;
+  }
+
+  #invoice-workbench-preview .iw-legend span { display: inline-flex; align-items: center; gap: 5px; }
+  #invoice-workbench-preview .iw-legend i { width: 7px; height: 7px; border-radius: 2px; }
+
+  #invoice-workbench-preview .iw-donut-wrap {
+    display: grid;
+    place-items: center;
+    min-height: 214px;
+  }
+
+  #invoice-workbench-preview .iw-donut {
+    width: 148px;
+    height: 148px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: conic-gradient(#3869eb 0 46%, #816cf0 46% 70%, #41b99a 70% 88%, #f1ad4b 88% 100%);
+    box-shadow: inset 0 0 0 1px light-dark(rgba(255,255,255,.6), rgba(255,255,255,.08));
+  }
+
+  #invoice-workbench-preview .iw-donut-center {
+    width: 94px;
+    height: 94px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    text-align: center;
+    background: light-dark(#ffffff, #141d2e);
+  }
+
+  #invoice-workbench-preview .iw-donut-number { font-size: 20px; font-weight: 760; }
+  #invoice-workbench-preview .iw-donut-label { margin-top: -17px; color: light-dark(#8893a5, #8f9db2); font-size: 10px; }
+
+  #invoice-workbench-preview .iw-recent {
+    grid-column: 1 / -1;
+    min-width: 0;
+  }
+
+  #invoice-workbench-preview .iw-table-wrap { overflow: auto; }
+  #invoice-workbench-preview .iw-table { width: 100%; border-collapse: collapse; min-width: 640px; }
+  #invoice-workbench-preview .iw-table th {
+    padding: 9px 10px;
+    border-bottom: 1px solid light-dark(#e7ebf2, #2a364c);
+    color: light-dark(#8892a3, #8f9db2);
+    font-size: 10px;
+    font-weight: 600;
+    text-align: left;
+  }
+
+  #invoice-workbench-preview .iw-table td {
+    padding: 12px 10px;
+    border-bottom: 1px solid light-dark(#edf0f5, #202c40);
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  #invoice-workbench-preview .iw-table tr:last-child td { border-bottom: 0; }
+
+  #invoice-workbench-preview .iw-doc-cell { display: flex; align-items: center; gap: 9px; }
+  #invoice-workbench-preview .iw-doc-icon {
+    width: 28px;
+    height: 32px;
+    display: grid;
+    place-items: center;
+    border-radius: 6px;
+    color: #3769ee;
+    background: light-dark(#edf2ff, #1d2b4c);
+    font-size: 9px;
+    font-weight: 750;
+  }
+
+  #invoice-workbench-preview .iw-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 7px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 620;
+  }
+
+  #invoice-workbench-preview .iw-status::before { content: &quot;&quot;; width: 5px; height: 5px; border-radius: 50%; }
+  #invoice-workbench-preview .iw-pending { color: light-dark(#b06a0b, #f5c46b); background: light-dark(#fff6e7, #3a2c17); }
+  #invoice-workbench-preview .iw-pending::before { background: #e99b2f; }
+  #invoice-workbench-preview .iw-progress { color: light-dark(#315ec6, #a8bcff); background: light-dark(#edf3ff, #1b2b50); }
+  #invoice-workbench-preview .iw-progress::before { background: #4e78e8; }
+  #invoice-workbench-preview .iw-done { color: light-dark(#25826c, #79d7bb); background: light-dark(#eaf8f3, #17372f); }
+  #invoice-workbench-preview .iw-done::before { background: #37ad8d; }
+
+  #invoice-workbench-preview .iw-view { display: none; }
+  #invoice-workbench-preview .iw-view.iw-active { display: block; }
+
+  #invoice-workbench-preview .iw-empty-page {
+    min-height: 520px;
+    display: grid;
+    place-items: center;
+  }
+
+  #invoice-workbench-preview .iw-upload-zone {
+    width: min(540px, 100%);
+    padding: 44px 30px;
+    border: 1.5px dashed light-dark(#bfc9db, #3f4f6b);
+    border-radius: 16px;
+    text-align: center;
+    background: light-dark(#fbfcff, #141e30);
+  }
+
+  #invoice-workbench-preview .iw-upload-mark {
+    width: 52px;
+    height: 52px;
+    margin: 0 auto 16px;
+    display: grid;
+    place-items: center;
+    border-radius: 14px;
+    color: #3769ee;
+    background: light-dark(#eaf0ff, #1d2b50);
+    font-size: 24px;
+  }
+
+  #invoice-workbench-preview .iw-upload-zone h2 { margin: 0 0 8px; font-size: 17px; }
+  #invoice-workbench-preview .iw-upload-zone p { margin: 0 0 20px; color: light-dark(#778397, #95a2b7); font-size: 12px; line-height: 1.6; }
+
+  #invoice-workbench-preview .iw-export-layout {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+
+  #invoice-workbench-preview .iw-export-rule {
+    padding: 13px;
+    border-radius: 10px;
+    background: light-dark(#f4f7fc, #192439);
+    color: light-dark(#465268, #bec8d9);
+    font: 11px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+    overflow-wrap: anywhere;
+  }
+
+  #invoice-workbench-preview .iw-check-list { display: grid; gap: 12px; }
+  #invoice-workbench-preview .iw-check-item { display: flex; align-items: center; gap: 9px; font-size: 12px; }
+  #invoice-workbench-preview .iw-check-box { width: 16px; height: 16px; border-radius: 4px; display: grid; place-items: center; color: white; background: #3769ee; font-size: 10px; }
+
+  #invoice-workbench-preview .iw-mobile-bar { display: none; }
+
+  @media (max-width: 760px) {
+    #invoice-workbench-preview .iw-window { min-height: 760px; grid-template-columns: 1fr; border-radius: 14px; }
+    #invoice-workbench-preview .iw-sidebar { display: none; }
+    #invoice-workbench-preview .iw-main { padding: 18px 16px 88px; }
+    #invoice-workbench-preview .iw-topbar { align-items: flex-start; }
+    #invoice-workbench-preview .iw-heading h1 { font-size: 21px; }
+    #invoice-workbench-preview .iw-heading p { max-width: 220px; }
+    #invoice-workbench-preview .iw-primary { padding: 9px 12px; }
+    #invoice-workbench-preview .iw-metrics { grid-template-columns: 1fr 1fr; }
+    #invoice-workbench-preview .iw-dashboard-grid { grid-template-columns: 1fr; }
+    #invoice-workbench-preview .iw-recent { grid-column: auto; }
+    #invoice-workbench-preview .iw-export-layout { grid-template-columns: 1fr; }
+    #invoice-workbench-preview .iw-mobile-bar {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 4;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      padding: 8px 8px max(9px, env(safe-area-inset-bottom));
+      border-top: 1px solid light-dark(#e2e7ef, #29364c);
+      background: light-dark(rgba(255,255,255,.96), rgba(18,26,42,.96));
+      backdrop-filter: blur(14px);
+    }
+    #invoice-workbench-preview .iw-window { position: relative; }
+    #invoice-workbench-preview .iw-mobile-button {
+      border: 0;
+      padding: 5px 2px;
+      display: grid;
+      gap: 3px;
+      justify-items: center;
+      color: light-dark(#808b9e, #8f9db2);
+      background: transparent;
+      font-size: 9px;
+      cursor: pointer;
+    }
+    #invoice-workbench-preview .iw-mobile-button strong { font-size: 16px; font-weight: 500; }
+    #invoice-workbench-preview .iw-mobile-button[aria-current=&quot;page&quot;] { color: #4b72e8; }
+  }
+&lt;/style&gt;
+
+&lt;div id=&quot;invoice-workbench-preview&quot;&gt;
+  &lt;section class=&quot;iw-window&quot; aria-label=&quot;发票工作台响应式界面原型&quot;&gt;
+    &lt;aside class=&quot;iw-sidebar&quot;&gt;
+      &lt;div class=&quot;iw-brand&quot;&gt;&lt;span class=&quot;iw-logo&quot;&gt;票&lt;/span&gt;&lt;span&gt;发票工作台&lt;/span&gt;&lt;/div&gt;
+      &lt;nav class=&quot;iw-nav&quot; aria-label=&quot;主要导航&quot;&gt;
+        &lt;button class=&quot;iw-nav-button&quot; data-page=&quot;dashboard&quot; aria-current=&quot;page&quot;&gt;&lt;span class=&quot;iw-nav-icon&quot;&gt;▦&lt;/span&gt;总览&lt;/button&gt;
+        &lt;button class=&quot;iw-nav-button&quot; data-page=&quot;upload&quot;&gt;&lt;span class=&quot;iw-nav-icon&quot;&gt;⇧&lt;/span&gt;上传发票&lt;/button&gt;
+        &lt;button class=&quot;iw-nav-button&quot; data-page=&quot;invoices&quot;&gt;&lt;span class=&quot;iw-nav-icon&quot;&gt;▤&lt;/span&gt;发票管理&lt;/button&gt;
+        &lt;button class=&quot;iw-nav-button&quot; data-page=&quot;export&quot;&gt;&lt;span class=&quot;iw-nav-icon&quot;&gt;⇩&lt;/span&gt;整理导出&lt;/button&gt;
+      &lt;/nav&gt;
+      &lt;div class=&quot;iw-sidebar-note&quot;&gt;本月已识别 28 张&lt;br&gt;云端识别字段可在入库前校对&lt;/div&gt;
+    &lt;/aside&gt;
+
+    &lt;main class=&quot;iw-main&quot;&gt;
+      &lt;div class=&quot;iw-view iw-active&quot; data-view=&quot;dashboard&quot;&gt;
+        &lt;header class=&quot;iw-topbar&quot;&gt;
+          &lt;div class=&quot;iw-heading&quot;&gt;&lt;h1&gt;早上好，老孙&lt;/h1&gt;&lt;p&gt;这是你 2026 年 8 月的发票概况&lt;/p&gt;&lt;/div&gt;
+          &lt;button class=&quot;iw-primary&quot; data-jump=&quot;upload&quot;&gt;＋ 上传发票&lt;/button&gt;
+        &lt;/header&gt;
+
+        &lt;section class=&quot;iw-metrics&quot; aria-label=&quot;关键指标&quot;&gt;
+          &lt;article class=&quot;iw-metric&quot;&gt;&lt;div class=&quot;iw-metric-label&quot;&gt;本月金额&lt;span class=&quot;iw-metric-dot&quot; style=&quot;background:#3769ee&quot;&gt;&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;iw-metric-value&quot;&gt;¥8,462&lt;/div&gt;&lt;div class=&quot;iw-metric-hint&quot;&gt;共 28 张发票&lt;/div&gt;&lt;/article&gt;
+          &lt;article class=&quot;iw-metric&quot;&gt;&lt;div class=&quot;iw-metric-label&quot;&gt;待报销&lt;span class=&quot;iw-metric-dot&quot; style=&quot;background:#e99b2f&quot;&gt;&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;iw-metric-value&quot;&gt;¥2,180&lt;/div&gt;&lt;div class=&quot;iw-metric-hint&quot;&gt;8 张 · 占 25.8%&lt;/div&gt;&lt;/article&gt;
+          &lt;article class=&quot;iw-metric&quot;&gt;&lt;div class=&quot;iw-metric-label&quot;&gt;报销中&lt;span class=&quot;iw-metric-dot&quot; style=&quot;background:#6d8fe8&quot;&gt;&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;iw-metric-value&quot;&gt;¥3,062&lt;/div&gt;&lt;div class=&quot;iw-metric-hint&quot;&gt;11 张 · 占 36.2%&lt;/div&gt;&lt;/article&gt;
+          &lt;article class=&quot;iw-metric&quot;&gt;&lt;div class=&quot;iw-metric-label&quot;&gt;已报销&lt;span class=&quot;iw-metric-dot&quot; style=&quot;background:#38aa8c&quot;&gt;&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;iw-metric-value&quot;&gt;¥3,220&lt;/div&gt;&lt;div class=&quot;iw-metric-hint&quot;&gt;9 张 · 占 38.0%&lt;/div&gt;&lt;/article&gt;
+        &lt;/section&gt;
+
+        &lt;section class=&quot;iw-dashboard-grid&quot;&gt;
+          &lt;article class=&quot;iw-panel&quot;&gt;
+            &lt;div class=&quot;iw-panel-head&quot;&gt;&lt;span class=&quot;iw-panel-title&quot;&gt;月度金额趋势&lt;/span&gt;&lt;select class=&quot;iw-select&quot; aria-label=&quot;统计年度&quot;&gt;&lt;option&gt;2026 年&lt;/option&gt;&lt;/select&gt;&lt;/div&gt;
+            &lt;div class=&quot;iw-month-chart&quot;&gt;
+              &lt;div class=&quot;iw-y-axis&quot;&gt;&lt;span&gt;12k&lt;/span&gt;&lt;span&gt;8k&lt;/span&gt;&lt;span&gt;4k&lt;/span&gt;&lt;span&gt;0&lt;/span&gt;&lt;/div&gt;
+              &lt;div class=&quot;iw-bars-area&quot;&gt;
+                &lt;div class=&quot;iw-bar-group&quot;&gt;&lt;div class=&quot;iw-bar-stack&quot; style=&quot;height:47%&quot;&gt;&lt;span style=&quot;height:36%&quot;&gt;&lt;/span&gt;&lt;span style=&quot;height:27%&quot;&gt;&lt;/span&gt;&lt;span style=&quot;height:37%&quot;&gt;&lt;/span&gt;&lt;/div&gt;&lt;span class=&quot;iw-month-label&quot;&gt;3月&lt;/span&gt;&lt;/div&gt;
+                &lt;div class=&quot;iw-bar-group&quot;&gt;&lt;div class=&quot;iw-bar-stack&quot; style=&quot;height:63%&quot;&gt;&lt;span style=&quot;height:44%&quot;&gt;&lt;/span&gt;&lt;span style=&quot;height:31%&quot;&gt;&lt;/span&gt;&lt;span style=&quot;height:25%&quot;&gt;&lt;/span&gt;&lt;/div&gt;&lt;span class=&quot;iw-month-label&quot;&gt;4月&lt;/span&gt;&lt;/div&gt;
+                &lt;div class=&quot;iw-bar-group&quot;&gt;&lt;div class=&quot;iw-bar-stack&quot; style=&quot;height:54%&quot;&gt;&lt;span style=&quot;height:28%&quot;&gt;&lt;/span&gt;&lt;span style=&quot;height:42%&quot;&gt;&lt;/span&gt;&lt;span style=&quot;height:30%&quot;&gt;&lt;/span&gt;&lt;/div&gt;&lt;span class=&quot;iw-month-label&quot;&gt;5月&lt;/span&gt;&lt;/div&gt;
+                &lt;div class=&quot;iw-bar-group&quot;&gt;&lt;div class=&quot;iw-bar-stack&quot; style=&quot;height:78%&quot;&gt;&lt;span style=&quot;height:39%&quot;&gt;&lt;/span&gt;&lt;span style=&quot;height:36%&quot;&gt;&lt;/span&gt;&lt;span style=&quot;height:25%&quot;&gt;&lt;/span&gt;&lt;/div&gt;&lt;span class=&quot;iw-month-label&quot;&gt;6月&lt;/span&gt;&lt;/div&gt;
+                &lt;div class=&quot;iw-bar-group&quot;&gt;&lt;div class=&quot;iw-bar-stack&quot; style=&quot;height:67%&quot;&gt;&lt;span style=&quot;height:34%&quot;&gt;&lt;/span&gt;&lt;span style=&quot;height:30%&quot;&gt;&lt;/span&gt;&lt;span style=&quot;height:36%&quot;&gt;&lt;/span&gt;&lt;/div&gt;&lt;span class=&quot;iw-month-label&quot;&gt;7月&lt;/span&gt;&lt;/div&gt;
+                &lt;div class=&quot;iw-bar-group&quot;&gt;&lt;div class=&quot;iw-bar-stack&quot; style=&quot;height:86%&quot;&gt;&lt;span style=&quot;height:26%&quot;&gt;&lt;/span&gt;&lt;span style=&quot;height:36%&quot;&gt;&lt;/span&gt;&lt;span style=&quot;height:38%&quot;&gt;&lt;/span&gt;&lt;/div&gt;&lt;span class=&quot;iw-month-label&quot;&gt;8月&lt;/span&gt;&lt;/div&gt;
+              &lt;/div&gt;
+            &lt;/div&gt;
+            &lt;div class=&quot;iw-legend&quot;&gt;&lt;span&gt;&lt;i style=&quot;background:#3869eb&quot;&gt;&lt;/i&gt;待报销&lt;/span&gt;&lt;span&gt;&lt;i style=&quot;background:#6f91f1&quot;&gt;&lt;/i&gt;报销中&lt;/span&gt;&lt;span&gt;&lt;i style=&quot;background:#9fb4ef&quot;&gt;&lt;/i&gt;已报销&lt;/span&gt;&lt;/div&gt;
+          &lt;/article&gt;
+
+          &lt;article class=&quot;iw-panel&quot;&gt;
+            &lt;div class=&quot;iw-panel-head&quot;&gt;&lt;span class=&quot;iw-panel-title&quot;&gt;发票类型占比&lt;/span&gt;&lt;span class=&quot;iw-select&quot;&gt;按金额&lt;/span&gt;&lt;/div&gt;
+            &lt;div class=&quot;iw-donut-wrap&quot;&gt;&lt;div class=&quot;iw-donut&quot;&gt;&lt;div class=&quot;iw-donut-center&quot;&gt;&lt;span class=&quot;iw-donut-number&quot;&gt;¥8,462&lt;/span&gt;&lt;span class=&quot;iw-donut-label&quot;&gt;本月总额&lt;/span&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;
+            &lt;div class=&quot;iw-legend&quot;&gt;&lt;span&gt;&lt;i style=&quot;background:#3869eb&quot;&gt;&lt;/i&gt;增值税普票 46%&lt;/span&gt;&lt;span&gt;&lt;i style=&quot;background:#816cf0&quot;&gt;&lt;/i&gt;专票 24%&lt;/span&gt;&lt;span&gt;&lt;i style=&quot;background:#41b99a&quot;&gt;&lt;/i&gt;交通票 18%&lt;/span&gt;&lt;span&gt;&lt;i style=&quot;background:#f1ad4b&quot;&gt;&lt;/i&gt;其他 12%&lt;/span&gt;&lt;/div&gt;
+          &lt;/article&gt;
+
+          &lt;article class=&quot;iw-panel iw-recent&quot;&gt;
+            &lt;div class=&quot;iw-panel-head&quot;&gt;&lt;span class=&quot;iw-panel-title&quot;&gt;最近发票&lt;/span&gt;&lt;button class=&quot;iw-select&quot; data-jump=&quot;invoices&quot;&gt;查看全部&lt;/button&gt;&lt;/div&gt;
+            &lt;div class=&quot;iw-table-wrap&quot;&gt;
+              &lt;table class=&quot;iw-table&quot;&gt;
+                &lt;thead&gt;&lt;tr&gt;&lt;th&gt;发票&lt;/th&gt;&lt;th&gt;开票日期&lt;/th&gt;&lt;th&gt;开票方&lt;/th&gt;&lt;th&gt;金额&lt;/th&gt;&lt;th&gt;报销状态&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;
+                &lt;tbody&gt;
+                  &lt;tr&gt;&lt;td&gt;&lt;div class=&quot;iw-doc-cell&quot;&gt;&lt;span class=&quot;iw-doc-icon&quot;&gt;PDF&lt;/span&gt;&lt;span&gt;增值税电子普通发票&lt;/span&gt;&lt;/div&gt;&lt;/td&gt;&lt;td&gt;2026-08-28&lt;/td&gt;&lt;td&gt;北京某某科技有限公司&lt;/td&gt;&lt;td&gt;¥1,280.00&lt;/td&gt;&lt;td&gt;&lt;span class=&quot;iw-status iw-pending&quot;&gt;待报销&lt;/span&gt;&lt;/td&gt;&lt;/tr&gt;
+                  &lt;tr&gt;&lt;td&gt;&lt;div class=&quot;iw-doc-cell&quot;&gt;&lt;span class=&quot;iw-doc-icon&quot;&gt;OFD&lt;/span&gt;&lt;span&gt;增值税电子专用发票&lt;/span&gt;&lt;/div&gt;&lt;/td&gt;&lt;td&gt;2026-08-25&lt;/td&gt;&lt;td&gt;上海某某信息服务有限公司&lt;/td&gt;&lt;td&gt;¥860.00&lt;/td&gt;&lt;td&gt;&lt;span class=&quot;iw-status iw-progress&quot;&gt;报销中&lt;/span&gt;&lt;/td&gt;&lt;/tr&gt;
+                  &lt;tr&gt;&lt;td&gt;&lt;div class=&quot;iw-doc-cell&quot;&gt;&lt;span class=&quot;iw-doc-icon&quot;&gt;JPG&lt;/span&gt;&lt;span&gt;铁路电子客票&lt;/span&gt;&lt;/div&gt;&lt;/td&gt;&lt;td&gt;2026-08-19&lt;/td&gt;&lt;td&gt;中国铁路上海局集团有限公司&lt;/td&gt;&lt;td&gt;¥553.00&lt;/td&gt;&lt;td&gt;&lt;span class=&quot;iw-status iw-done&quot;&gt;已报销&lt;/span&gt;&lt;/td&gt;&lt;/tr&gt;
+                &lt;/tbody&gt;
+              &lt;/table&gt;
+            &lt;/div&gt;
+          &lt;/article&gt;
+        &lt;/section&gt;
+      &lt;/div&gt;
+
+      &lt;div class=&quot;iw-view&quot; data-view=&quot;upload&quot;&gt;
+        &lt;header class=&quot;iw-topbar&quot;&gt;&lt;div class=&quot;iw-heading&quot;&gt;&lt;h1&gt;上传发票&lt;/h1&gt;&lt;p&gt;支持 PDF、OFD、JPG、PNG 等常见格式&lt;/p&gt;&lt;/div&gt;&lt;/header&gt;
+        &lt;div class=&quot;iw-empty-page&quot;&gt;&lt;section class=&quot;iw-upload-zone&quot;&gt;&lt;div class=&quot;iw-upload-mark&quot;&gt;⇧&lt;/div&gt;&lt;h2&gt;拖拽文件到这里，或点击选择&lt;/h2&gt;&lt;p&gt;可以一次上传多张发票。上传后系统会先检查重复，再进行云端识别与字段校对。&lt;/p&gt;&lt;button class=&quot;iw-primary&quot;&gt;选择发票文件&lt;/button&gt;&lt;/section&gt;&lt;/div&gt;
+      &lt;/div&gt;
+
+      &lt;div class=&quot;iw-view&quot; data-view=&quot;invoices&quot;&gt;
+        &lt;header class=&quot;iw-topbar&quot;&gt;&lt;div class=&quot;iw-heading&quot;&gt;&lt;h1&gt;发票管理&lt;/h1&gt;&lt;p&gt;搜索、筛选、校对并更新报销状态&lt;/p&gt;&lt;/div&gt;&lt;button class=&quot;iw-primary&quot; data-jump=&quot;upload&quot;&gt;＋ 上传发票&lt;/button&gt;&lt;/header&gt;
+        &lt;article class=&quot;iw-panel&quot;&gt;
+          &lt;div class=&quot;iw-panel-head&quot;&gt;&lt;span class=&quot;iw-panel-title&quot;&gt;全部发票 · 86&lt;/span&gt;&lt;span class=&quot;iw-select&quot;&gt;2026 年 8 月　全部状态&lt;/span&gt;&lt;/div&gt;
+          &lt;div class=&quot;iw-table-wrap&quot;&gt;&lt;table class=&quot;iw-table&quot;&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;类型&lt;/th&gt;&lt;th&gt;发票号码&lt;/th&gt;&lt;th&gt;开票方&lt;/th&gt;&lt;th&gt;日期&lt;/th&gt;&lt;th&gt;金额&lt;/th&gt;&lt;th&gt;状态&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;&lt;tbody&gt;&lt;tr&gt;&lt;td&gt;增值税电子普通发票&lt;/td&gt;&lt;td&gt;25112000000018475031&lt;/td&gt;&lt;td&gt;北京某某科技有限公司&lt;/td&gt;&lt;td&gt;2026-08-28&lt;/td&gt;&lt;td&gt;¥1,280.00&lt;/td&gt;&lt;td&gt;&lt;span class=&quot;iw-status iw-pending&quot;&gt;待报销&lt;/span&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td&gt;增值税电子专用发票&lt;/td&gt;&lt;td&gt;25112000000017384920&lt;/td&gt;&lt;td&gt;上海某某信息服务有限公司&lt;/td&gt;&lt;td&gt;2026-08-25&lt;/td&gt;&lt;td&gt;¥860.00&lt;/td&gt;&lt;td&gt;&lt;span class=&quot;iw-status iw-progress&quot;&gt;报销中&lt;/span&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td&gt;铁路电子客票&lt;/td&gt;&lt;td&gt;847230159104&lt;/td&gt;&lt;td&gt;中国铁路上海局集团有限公司&lt;/td&gt;&lt;td&gt;2026-08-19&lt;/td&gt;&lt;td&gt;¥553.00&lt;/td&gt;&lt;td&gt;&lt;span class=&quot;iw-status iw-done&quot;&gt;已报销&lt;/span&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/tbody&gt;&lt;/table&gt;&lt;/div&gt;
+        &lt;/article&gt;
+      &lt;/div&gt;
+
+      &lt;div class=&quot;iw-view&quot; data-view=&quot;export&quot;&gt;
+        &lt;header class=&quot;iw-topbar&quot;&gt;&lt;div class=&quot;iw-heading&quot;&gt;&lt;h1&gt;整理导出&lt;/h1&gt;&lt;p&gt;按月份与发票类型自动归档&lt;/p&gt;&lt;/div&gt;&lt;/header&gt;
+        &lt;section class=&quot;iw-export-layout&quot;&gt;
+          &lt;article class=&quot;iw-panel&quot;&gt;&lt;div class=&quot;iw-panel-head&quot;&gt;&lt;span class=&quot;iw-panel-title&quot;&gt;导出范围&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;iw-check-list&quot;&gt;&lt;div class=&quot;iw-check-item&quot;&gt;&lt;span class=&quot;iw-check-box&quot;&gt;✓&lt;/span&gt;2026 年 8 月&lt;/div&gt;&lt;div class=&quot;iw-check-item&quot;&gt;&lt;span class=&quot;iw-check-box&quot;&gt;✓&lt;/span&gt;全部发票类型&lt;/div&gt;&lt;div class=&quot;iw-check-item&quot;&gt;&lt;span class=&quot;iw-check-box&quot;&gt;✓&lt;/span&gt;包含 Excel 明细&lt;/div&gt;&lt;div class=&quot;iw-check-item&quot;&gt;&lt;span class=&quot;iw-check-box&quot;&gt;✓&lt;/span&gt;打包为 ZIP&lt;/div&gt;&lt;/div&gt;&lt;/article&gt;
+          &lt;article class=&quot;iw-panel&quot;&gt;&lt;div class=&quot;iw-panel-head&quot;&gt;&lt;span class=&quot;iw-panel-title&quot;&gt;文件命名规则&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;iw-export-rule&quot;&gt;日期-类型-开票方名称-发票号码.ext&lt;/div&gt;&lt;div class=&quot;iw-panel-head&quot; style=&quot;margin:18px 0 9px&quot;&gt;&lt;span class=&quot;iw-panel-title&quot;&gt;目录示例&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;iw-export-rule&quot;&gt;2026-08 / 增值税普票 /&lt;br&gt;2026-08-28-增值税普票-北京某某科技有限公司-25112000000018475031.pdf&lt;/div&gt;&lt;/article&gt;
+          &lt;article class=&quot;iw-panel&quot; style=&quot;grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:18px&quot;&gt;&lt;div&gt;&lt;div class=&quot;iw-panel-title&quot;&gt;预计导出 28 张发票&lt;/div&gt;&lt;div class=&quot;iw-metric-hint&quot;&gt;文件约 46.8 MB，生成前会再次检查缺失字段&lt;/div&gt;&lt;/div&gt;&lt;button class=&quot;iw-primary&quot;&gt;生成 Excel + ZIP&lt;/button&gt;&lt;/article&gt;
+        &lt;/section&gt;
+      &lt;/div&gt;
+    &lt;/main&gt;
+
+    &lt;nav class=&quot;iw-mobile-bar&quot; aria-label=&quot;移动端导航&quot;&gt;
+      &lt;button class=&quot;iw-mobile-button&quot; data-page=&quot;dashboard&quot; aria-current=&quot;page&quot;&gt;&lt;strong&gt;▦&lt;/strong&gt;总览&lt;/button&gt;
+      &lt;button class=&quot;iw-mobile-button&quot; data-page=&quot;upload&quot;&gt;&lt;strong&gt;⇧&lt;/strong&gt;上传&lt;/button&gt;
+      &lt;button class=&quot;iw-mobile-button&quot; data-page=&quot;invoices&quot;&gt;&lt;strong&gt;▤&lt;/strong&gt;发票&lt;/button&gt;
+      &lt;button class=&quot;iw-mobile-button&quot; data-page=&quot;export&quot;&gt;&lt;strong&gt;⇩&lt;/strong&gt;导出&lt;/button&gt;
+    &lt;/nav&gt;
+  &lt;/section&gt;
+&lt;/div&gt;
+
+&lt;script&gt;
+(() =&gt; {
+  const root = document.getElementById(&#x27;invoice-workbench-preview&#x27;);
+  const views = [...root.querySelectorAll(&#x27;[data-view]&#x27;)];
+  const navButtons = [...root.querySelectorAll(&#x27;[data-page]&#x27;)];
+
+  function showPage(page) {
+    views.forEach(view =&gt; view.classList.toggle(&#x27;iw-active&#x27;, view.dataset.view === page));
+    navButtons.forEach(button =&gt; {
+      if (button.dataset.page === page) button.setAttribute(&#x27;aria-current&#x27;, &#x27;page&#x27;);
+      else button.removeAttribute(&#x27;aria-current&#x27;);
+    });
+  }
+
+  navButtons.forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; showPage(button.dataset.page)));
+  root.querySelectorAll(&#x27;[data-jump]&#x27;).forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; showPage(button.dataset.jump)));
+})();
+&lt;/script&gt;
+
+&lt;script src=&quot;https://unpkg.com/@floating-ui/core@1.7.3/dist/floating-ui.core.umd.min.js&quot;&gt;&lt;/script&gt;
+&lt;script src=&quot;https://unpkg.com/@floating-ui/dom@1.7.4/dist/floating-ui.dom.umd.min.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  if (window.FloatingUIDOM == null) {
+    return;
+  }
+  const { autoUpdate, computePosition, flip, offset, shift, size } =
+    window.FloatingUIDOM;
+  const tooltipPlacements = new Set([&quot;top&quot;, &quot;right&quot;, &quot;bottom&quot;, &quot;left&quot;]);
+  const tooltipId = `codex-visualization-tooltip-${
+    window.crypto?.randomUUID?.() ?? Date.now().toString(36)
+  }`;
+  const tooltipGap = 5;
+  const hoverDelay = 700;
+  const skipDelay = 300;
+  let activeTrigger = null;
+  let pendingTrigger = null;
+  let tooltip = null;
+  let openTimeout = null;
+  let autoUpdateCleanup = null;
+  let positionRequest = 0;
+  let skipDelayUntil = 0;
+  let lastPointerWasTouch = false;
+  let pinnedByTouch = false;
+
+  const getTrigger = (target) =&gt;
+    target?.nodeType === Node.ELEMENT_NODE
+      ? target.closest(&quot;[data-tooltip]&quot;)
+      : null;
+  const containsTarget = (trigger, target) =&gt;
+    target?.nodeType != null &amp;&amp; trigger.contains(target);
+  const getContent = (trigger) =&gt;
+    trigger.getAttribute(&quot;data-tooltip&quot;)?.trim() ?? &quot;&quot;;
+  const getPlacement = (trigger) =&gt; {
+    const placement = trigger.getAttribute(&quot;data-tooltip-placement&quot;);
+    return tooltipPlacements.has(placement) ? placement : &quot;top&quot;;
+  };
+  const getTooltip = () =&gt; {
+    if (tooltip == null) {
+      tooltip = document.createElement(&quot;div&quot;);
+      tooltip.id = tooltipId;
+      tooltip.className = &quot;tooltip&quot;;
+      tooltip.setAttribute(&quot;role&quot;, &quot;tooltip&quot;);
+    }
+    return tooltip;
+  };
+  const setDescribedBy = (trigger, described) =&gt; {
+    const ids = new Set(
+      (trigger.getAttribute(&quot;aria-describedby&quot;) ?? &quot;&quot;)
+        .split(/\s+/)
+        .filter(Boolean),
+    );
+    if (described) {
+      ids.add(tooltipId);
+    } else {
+      ids.delete(tooltipId);
+    }
+    if (ids.size === 0) {
+      trigger.removeAttribute(&quot;aria-describedby&quot;);
+    } else {
+      trigger.setAttribute(&quot;aria-describedby&quot;, [...ids].join(&quot; &quot;));
+    }
+  };
+  const clearOpenTimeout = () =&gt; {
+    if (openTimeout != null) {
+      window.clearTimeout(openTimeout);
+      openTimeout = null;
+    }
+    pendingTrigger = null;
+  };
+  const closeTooltip = (activateSkipDelay = true) =&gt; {
+    clearOpenTimeout();
+    pinnedByTouch = false;
+    positionRequest += 1;
+    autoUpdateCleanup?.();
+    autoUpdateCleanup = null;
+    if (activeTrigger == null) {
+      return;
+    }
+    setDescribedBy(activeTrigger, false);
+    activeTrigger = null;
+    tooltip?.remove();
+    if (activateSkipDelay) {
+      skipDelayUntil = Date.now() + skipDelay;
+    }
+  };
+  const updatePosition = (trigger, floating) =&gt; {
+    const request = ++positionRequest;
+    void computePosition(trigger, floating, {
+      middleware: [
+        offset(tooltipGap),
+        flip({ padding: tooltipGap }),
+        shift({ padding: tooltipGap }),
+        size({
+          padding: tooltipGap,
+          apply({ availableHeight, availableWidth, elements }) {
+            elements.floating.style.setProperty(
+              &quot;--tooltip-available-width&quot;,
+              `${Math.max(0, availableWidth)}px`,
+            );
+            elements.floating.style.setProperty(
+              &quot;--tooltip-available-height&quot;,
+              `${Math.max(0, availableHeight)}px`,
+            );
+          },
+        }),
+      ],
+      placement: getPlacement(trigger),
+      strategy: &quot;fixed&quot;,
+    })
+      .then(({ x, y }) =&gt; {
+        if (activeTrigger !== trigger || request !== positionRequest) {
+          return;
+        }
+        const scale = window.devicePixelRatio || 1;
+        floating.style.transform = `translate(${Math.round(x * scale) / scale}px, ${Math.round(y * scale) / scale}px)`;
+        floating.style.visibility = &quot;visible&quot;;
+      })
+      .catch(() =&gt; {
+        if (activeTrigger === trigger &amp;&amp; request === positionRequest) {
+          closeTooltip(false);
+        }
+      });
+  };
+  const openTooltip = (trigger) =&gt; {
+    const content = getContent(trigger);
+    if (!trigger.isConnected || content.length === 0) {
+      return;
+    }
+    clearOpenTimeout();
+    if (activeTrigger === trigger) {
+      return;
+    }
+    closeTooltip();
+    const floating = getTooltip();
+    floating.textContent = content;
+    floating.style.visibility = &quot;hidden&quot;;
+    floating.style.transform = &quot;translate(0, 0)&quot;;
+    document.body.appendChild(floating);
+    activeTrigger = trigger;
+    setDescribedBy(trigger, true);
+    autoUpdateCleanup = autoUpdate(trigger, floating, () =&gt; {
+      updatePosition(trigger, floating);
+    });
+  };
+  const requestOpen = (trigger, immediate = false) =&gt; {
+    if (
+      getContent(trigger).length === 0 ||
+      activeTrigger === trigger ||
+      pendingTrigger === trigger
+    ) {
+      return;
+    }
+    clearOpenTimeout();
+    pendingTrigger = trigger;
+    const delay =
+      immediate || activeTrigger != null || Date.now() &lt; skipDelayUntil
+        ? 0
+        : hoverDelay;
+    if (delay === 0) {
+      openTooltip(trigger);
+      return;
+    }
+    openTimeout = window.setTimeout(() =&gt; {
+      openTimeout = null;
+      pendingTrigger = null;
+      openTooltip(trigger);
+    }, delay);
+  };
+  const handlePointerOpen = (event) =&gt; {
+    if (event.pointerType === &quot;touch&quot;) {
+      return;
+    }
+    const trigger = getTrigger(event.target);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    requestOpen(trigger);
+  };
+  const handlePointer = (event) =&gt; {
+    lastPointerWasTouch =
+      event.type === &quot;pointerdown&quot; &amp;&amp; event.pointerType === &quot;touch&quot;;
+  };
+  const handleTouchClick = (event) =&gt; {
+    const isTouch = event.pointerType === &quot;touch&quot; || lastPointerWasTouch;
+    lastPointerWasTouch = false;
+    if (!isTouch || event.detail === 0) {
+      return;
+    }
+    const trigger = getTrigger(event.target);
+    if (
+      trigger == null ||
+      !trigger.isConnected ||
+      getContent(trigger).length === 0 ||
+      (pinnedByTouch &amp;&amp; activeTrigger === trigger)
+    ) {
+      if (pinnedByTouch) {
+        closeTooltip();
+      }
+      return;
+    }
+    openTooltip(trigger);
+    pinnedByTouch = activeTrigger === trigger;
+    window.setTimeout(() =&gt; {
+      if (activeTrigger === trigger &amp;&amp; !trigger.isConnected) {
+        closeTooltip(false);
+      }
+    }, 0);
+  };
+  const handleLeave = (event) =&gt; {
+    if (pinnedByTouch) {
+      return;
+    }
+    const trigger = getTrigger(event.target);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const handleFocusIn = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (trigger?.matches(&quot;:focus-visible&quot;)) {
+      requestOpen(trigger, true);
+    }
+  };
+  const handleKeyDown = (event) =&gt; {
+    if (event.key === &quot;Escape&quot;) {
+      closeTooltip();
+    }
+  };
+  const handleContextMenu = (event) =&gt; {
+    lastPointerWasTouch = false;
+    const trigger = getTrigger(event.target);
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const destroy = () =&gt; {
+    closeTooltip(false);
+    lastPointerWasTouch = false;
+    document.removeEventListener(&quot;pointerover&quot;, handlePointerOpen);
+    document.removeEventListener(&quot;pointerdown&quot;, handlePointer);
+    document.removeEventListener(&quot;pointercancel&quot;, handlePointer);
+    document.removeEventListener(&quot;click&quot;, handleTouchClick);
+    document.removeEventListener(&quot;pointerout&quot;, handleLeave);
+    document.removeEventListener(&quot;focusin&quot;, handleFocusIn);
+    document.removeEventListener(&quot;focusout&quot;, handleLeave);
+    document.removeEventListener(&quot;keydown&quot;, handleKeyDown);
+    document.removeEventListener(&quot;contextmenu&quot;, handleContextMenu);
+    tooltip = null;
+  };
+
+  document.addEventListener(&quot;pointerover&quot;, handlePointerOpen);
+  document.addEventListener(&quot;pointerdown&quot;, handlePointer);
+  document.addEventListener(&quot;pointercancel&quot;, handlePointer);
+  document.addEventListener(&quot;click&quot;, handleTouchClick);
+  document.addEventListener(&quot;pointerout&quot;, handleLeave);
+  document.addEventListener(&quot;focusin&quot;, handleFocusIn);
+  document.addEventListener(&quot;focusout&quot;, handleLeave);
+  document.addEventListener(&quot;keydown&quot;, handleKeyDown);
+  document.addEventListener(&quot;contextmenu&quot;, handleContextMenu);
+  window.addEventListener(&quot;pagehide&quot;, destroy, { once: true });
+})();
+&lt;/script&gt;
+&lt;script id=&quot;codex-visualization-lucide&quot; async src=&quot;https://unpkg.com/lucide@1.17.0/dist/umd/lucide.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  const initialize = () =&gt; {
+    globalThis.lucide?.createIcons({ attrs: { width: 16, height: 16 } });
+  };
+  if (globalThis.lucide != null) {
+    initialize();
+    return;
+  }
+  document
+    .getElementById(&quot;codex-visualization-lucide&quot;)
+    ?.addEventListener(&quot;load&quot;, initialize, { once: true });
+})();
+&lt;/script&gt;
+
+&lt;/body&gt;
+&lt;/html&gt;
+"></iframe>
+</body>
+</html>
