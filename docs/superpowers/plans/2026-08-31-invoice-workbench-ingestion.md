@@ -1,602 +1,490 @@
-# 发票上传识别与校对 Implementation Plan
+# 本地发票上传识别与校对 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 交付批量上传、文件查重、异步 OCR、业务查重与人工校对入库闭环。
+**Goal:** 完成 PDF、OFD、JPG、JPEG、PNG 的本地优先识别、查重、人工校对与手动云端兜底闭环。
 
-**Architecture:** 浏览器先创建导入批次，再以单文件请求并发上传，服务端流转为私有对象、计算 SHA-256 并创建 pg-boss 任务。OCR 供应商响应先进入 `OcrProvider` 适配层和草稿表，用户确认后才写入正式发票表。
+**Architecture:** 浏览器逐文件上传，本地服务完成文件头校验、临时写入、SHA-256 和任务入队。Swift CLI 使用 PDFKit/Vision 离线提取文字，TypeScript 负责 OFD XML、字段标准化和置信度；腾讯云 `RecognizeGeneralInvoice` 仅在单张发票二次确认后调用。
 
-**Tech Stack:** Next.js Route Handlers、PostgreSQL 16、Drizzle ORM、pg-boss、腾讯云 OCR Node SDK、Zod、Web Crypto、Vitest、Testing Library、Playwright
+**Tech Stack:** Next.js Route Handlers、SQLite/Drizzle、Swift 6、Vision、PDFKit、Security.framework、fast-xml-parser、unzipper、Zod、腾讯云 OCR Node SDK、Vitest、Playwright
 
 **Spec:** `docs/product-design.md`
 
 ## Global Constraints
 
-- 单批最多 100 个文件，单文件最大 20 MB。
-- 支持扩展名 PDF、OFD、JPG、JPEG、PNG；服务端同时校验 MIME 与文件头。
-- 每个文件独立成功或失败，一个失败项不得中止整批。
-- 文件内容指纹查重在调用收费 OCR 前完成。
-- 真实 OCR 凭证只从环境变量读取，响应与日志不得包含完整票面原文。
-- 关键字段为日期、类型、开票方、价税合计、发票号码或唯一凭证号；未确认前不能正式入库。
-- 金额使用两位小数字符串，经 Decimal 解析后写入 PostgreSQL `numeric(14,2)`。
+- 单批最多 100 个文件，单文件最大 20 MB；支持 PDF、OFD、JPG、JPEG、PNG。
+- 每个文件独立处理；单个失败不得中断整批。
+- 本地顺序固定为 PDF 文字层 → Apple Vision → OFD 本地解析/图像 OCR → 字段解析。
+- 本地识别任务不得发起网络请求。
+- 未点击并二次确认“使用云端重新识别”时，不得上传发票。
+- 完全重复文件和相同代码/号码默认阻止入库；强制保留必须填写原因。
+- 关键字段未确认前只能是草稿；确认入库后的初始状态为“待报销”。
+- 每个 Task 完成后独立提交并运行 `git push origin HEAD`。
 
 ---
 
-### Task 1: 建立导入、草稿与发票数据模型
+## File Structure
 
-**Files:**
-- Modify: `package.json`
-- Modify: `pnpm-lock.yaml`
-- Create: `src/domain/invoice.ts`
-- Create: `src/domain/invoice.test.ts`
-- Create: `src/db/schema/invoices.ts`
-- Modify: `src/db/schema/index.ts`
-- Create: `src/test/db.ts`
-- Create: `src/test/factories/invoice.ts`
-- Create: `drizzle/0001_invoice_ingestion.sql` (generated)
-
-**Interfaces:**
-- Consumes: `users.id`。
-- Produces: `InvoiceStatus`、`InvoiceType`、`ImportItemState`；表 `import_batches`、`import_items`、`invoice_drafts`、`invoices`、`duplicate_matches`。
-
-- [ ] **Step 1: 写金额与类型标准化失败测试**
-
-```ts
-import { normalizeAmount, normalizeInvoiceType } from "./invoice";
-
-test.each([["￥1,234.5", "1234.50"], ["123.00元", "123.00"]])("normalizes amount", (input, output) => {
-  expect(normalizeAmount(input)).toBe(output);
-});
-
-test("maps a digital normal invoice", () => {
-  expect(normalizeInvoiceType("电子发票（普通发票）")).toBe("digital_normal");
-});
+```text
+native/InvoiceNative/                 # SwiftPM 本地 OCR 与钥匙串 CLI
+src/lib/imports/                      # 上传校验、文件落盘、批次状态
+src/lib/recognition/                  # 本地识别编排、字段解析、置信度
+src/lib/ofd/                          # OFD ZIP/XML 与内嵌图像解析
+src/lib/duplicates/                   # 文件级和业务级重复判断
+src/lib/cloud-ocr/                    # 明确触发的可替换云端适配层
+src/app/api/imports/                  # 上传、状态与确认 API
+src/app/api/cloud-ocr/                # 凭证设置和单张云端重识别 API
+src/app/upload/                       # 上传与校对页面
+tests/fixtures/invoices/              # 人工生成、无真实个人信息的测试票据
 ```
 
-- [ ] **Step 2: 运行测试验证失败**
-
-Run: `pnpm test -- src/domain/invoice.test.ts`
-
-Expected: FAIL，领域模块不存在。
-
-- [ ] **Step 3: 定义领域类型与表**
-
-Run: `pnpm add decimal.js`
+## Shared Interfaces
 
 ```ts
-export const invoiceTypes = ["vat_normal", "vat_special", "digital_normal", "digital_special", "railway", "taxi", "flight_itinerary", "other"] as const;
-export type InvoiceType = (typeof invoiceTypes)[number];
-export const invoiceStatuses = ["pending", "in_progress", "reimbursed"] as const;
-export type InvoiceStatus = (typeof invoiceStatuses)[number];
-export const importItemStates = ["uploading", "stored", "duplicate_blocked", "queued", "recognizing", "review", "confirmed", "failed"] as const;
-export type ImportItemState = (typeof importItemStates)[number];
-
-export function normalizeAmount(input: string): string {
-  const cleaned = input.replace(/[￥¥元,\s]/g, "");
-  return new Decimal(cleaned).toFixed(2);
-}
-```
-
-The Drizzle schema must use UUID primary keys and include:
-
-```ts
-export const invoices = pgTable("invoice", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  sourceItemId: uuid("source_item_id").notNull(),
-  type: invoiceTypeEnum("type").notNull(),
-  invoiceDate: date("invoice_date").notNull(),
-  invoiceCode: text("invoice_code"),
-  invoiceNumber: text("invoice_number").notNull(),
-  sellerName: text("seller_name").notNull(),
-  buyerName: text("buyer_name"),
-  amountWithoutTax: numeric("amount_without_tax", { precision: 14, scale: 2 }),
-  taxAmount: numeric("tax_amount", { precision: 14, scale: 2 }),
-  totalAmount: numeric("total_amount", { precision: 14, scale: 2 }).notNull(),
-  status: invoiceStatusEnum("status").default("pending").notNull(),
-  storageKey: text("storage_key").notNull(),
-  originalFileName: text("original_file_name").notNull(),
-  contentType: text("content_type").notNull(),
-  sha256: char("sha256", { length: 64 }).notNull(),
-  recognizedAt: timestamp("recognized_at", { withTimezone: true }),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-});
-```
-
-`import_items` stores user ownership through batch, object key, file metadata, SHA-256, state, error code/message and timestamps. `invoice_drafts` stores normalized nullable fields, per-field confidence JSON, provider request ID and sanitized raw summary JSON. `duplicate_matches` stores candidate invoice ID, reasons array, score, resolution and force-keep reason.
-
-`src/test/db.ts` exports `resetDatabase()` and skips with a clear message when `DATABASE_URL_TEST` is absent. `src/test/factories/invoice.ts` exports these exact helpers for later tasks:
-
-```ts
-export function seedUser(input: { id: string; email?: string }): Promise<User>;
-export function seedInvoice(input: Partial<NewInvoice> & { userId: string }): Promise<Invoice>;
-export function seedStoredItem(input?: Partial<NewImportItem>): Promise<ImportItem>;
-export function getItemState(id: string): Promise<ImportItemState>;
-export function countDrafts(importItemId: string): Promise<number>;
-export function getStatus(invoiceId: string): Promise<InvoiceStatus>;
-export function findInvoice(invoiceId: string): Promise<Invoice | null>;
-```
-
-- [ ] **Step 4: 生成 migration 并验证**
-
-Run: `pnpm db:generate -- --name invoice_ingestion && pnpm test -- src/domain/invoice.test.ts && pnpm typecheck`
-
-Expected: migration 含用户与 SHA-256 查询索引、代码号码组合索引；测试 PASS。
-
-- [ ] **Step 5: 提交**
-
-```bash
-git add package.json pnpm-lock.yaml src/domain src/db/schema src/test drizzle
-git commit -m "feat: add invoice ingestion schema"
-```
-
----
-
-### Task 2: 创建批次并逐文件上传
-
-**Files:**
-- Create: `src/imports/validation.ts`
-- Create: `src/imports/service.ts`
-- Create: `src/imports/service.test.ts`
-- Create: `src/app/api/imports/route.ts`
-- Create: `src/app/api/imports/[batchId]/files/route.ts`
-
-**Interfaces:**
-- Consumes: `requireSession()`、`ObjectStore.put()`、导入表。
-- Produces: `createImportBatch(userId, count)`；`storeImportFile({ userId, batchId, file }) -> ImportItemResult`。
-
-- [ ] **Step 1: 写文件校验测试**
-
-```ts
-test("rejects a disguised executable", async () => {
-  const file = new File([Buffer.from("MZ")], "fake.pdf", { type: "application/pdf" });
-  await expect(validateInvoiceFile(file)).rejects.toMatchObject({ code: "INVALID_FILE_SIGNATURE" });
-});
-
-test("rejects the 101st item before storage", async () => {
-  await expect(createImportBatch("u1", 101)).rejects.toMatchObject({ code: "BATCH_LIMIT_EXCEEDED" });
-});
-```
-
-- [ ] **Step 2: 运行测试验证失败**
-
-Run: `pnpm test -- src/imports/service.test.ts`
-
-Expected: FAIL，服务不存在。
-
-- [ ] **Step 3: 实现校验、哈希和存储**
-
-```ts
-export type ImportItemResult = {
-  itemId: string;
-  state: "stored" | "duplicate_blocked";
-  sha256: string;
-  duplicateInvoiceId?: string;
+export type SupportedFormat = "pdf" | "ofd" | "png" | "jpeg";
+export type FileProbe = { name: string; size: number; mime: string; firstBytes: Uint8Array };
+export type ValidatedFile = { originalName: string; size: number; format: SupportedFormat; extension: string };
+export type StoredSource = { id: string; originalName: string; managedRelativePath: string; format: SupportedFormat; size: number; sha256: string };
+export type RecognitionPage = { index: number; lines: Array<{ text: string; confidence: number }> };
+export type RecognitionDocument = { engine: "pdf-text" | "vision" | "ofd-text" | "ofd-image"; pages: RecognitionPage[]; warnings: string[] };
+export type NativeRecognitionInput = { kind: "image" | "pdf"; path: string };
+export type NativeDocument = { source: "pdf-text" | "vision-image" | "vision-pdf"; pages: RecognitionPage[] };
+export type OfdDocument = { pages: Array<{ index: number; text: string; imagePaths: string[] }>; warnings: string[] };
+export type InvoiceFields = {
+  invoiceType: string | null; issueDate: string | null; invoiceCode: string | null;
+  invoiceNumber: string | null; uniqueVoucherNumber: string | null; sellerName: string | null;
+  buyerName: string | null; amountExcludingTaxCents: number | null; taxCents: number | null;
+  totalAmountCents: number | null;
 };
+export type InvoiceFieldKey = keyof InvoiceFields;
+export type ParsedInvoiceDraft = { fields: InvoiceFields; confidence: Record<InvoiceFieldKey, number>; warnings: string[] };
+export type DuplicateCandidate = { invoiceId: string; reason: "code_number" | "number_date_amount_type_seller"; evidence: string[] };
+export type ConfirmDraftInput = { draftId: string; edits: InvoiceFields; forceKeepReason?: string };
+export type ConfirmedInvoice = InvoiceFields & { id: string; reimbursementStatus: "pending"; sourceFileId: string };
+export type CloudRecognitionInput = { bytes: Buffer; format: SupportedFormat };
+export type CloudRecognitionResult = { requestId: string; draft: ParsedInvoiceDraft };
+export interface CloudOcrProvider { recognize(input: CloudRecognitionInput): Promise<CloudRecognitionResult> }
+```
 
-export async function sha256(buffer: Buffer): Promise<string> {
-  return createHash("sha256").update(buffer).digest("hex");
+`WorkPaths` and `LocalJobQueue` are imported from the completed foundation plan at `src/lib/bootstrap/types.ts` and `src/lib/jobs/queue.ts`.
+
+### Task 1: Swift 本地识别与钥匙串助手
+
+**Files:**
+- Create: `native/InvoiceNative/Package.swift`
+- Create: `native/InvoiceNative/Sources/InvoiceNative/main.swift`
+- Create: `native/InvoiceNative/Sources/InvoiceNative/Recognition.swift`
+- Create: `native/InvoiceNative/Sources/InvoiceNative/Keychain.swift`
+- Create: `native/InvoiceNative/Tests/InvoiceNativeTests/RecognitionTests.swift`
+- Create: `src/lib/native/client.ts`
+- Test: `tests/lib/native/client.test.ts`
+- Modify: `package.json`, `scripts/install.mjs`
+
+**Interfaces:**
+- Produces stdin JSONL commands `recognizeImage`, `extractPdf`, `recognizePdf`, `keychainSet`, `keychainGet`, `keychainDelete`
+- Produces stdout `NativeResponse = { ok: true; result: unknown } | { ok: false; error: { code: string; message: string } }`
+- Produces `nativeRecognize(input: NativeRecognitionInput): Promise<NativeDocument>`
+- Produces keychain service `cn.local.invoice-workbench.tencent-ocr`
+
+- [ ] **Step 1: Write failing Swift and TypeScript contract tests**
+
+```swift
+func testNormalizeVisionResultKeepsConfidence() {
+  let result = normalize([VisionLine(text: "价税合计 ¥128.00", confidence: 0.93)])
+  XCTAssertEqual(result.lines[0].text, "价税合计 ¥128.00")
+  XCTAssertEqual(result.lines[0].confidence, 0.93, accuracy: 0.001)
 }
 ```
 
-Validate size `>0 && <=20*1024*1024`, allowed extension, MIME, and magic bytes (`%PDF` for PDF, ZIP container inspection for OFD, JPEG `ffd8ff`, PNG `89504e47`). Sanitize the original name for display but never use it as the object key. Store as `users/{userId}/imports/{batchId}/{itemId}.{ext}`.
+```ts
+it("maps a native JSONL response without exposing stderr", async () => {
+  const doc = await nativeRecognize({ kind: "image", path: fixture("invoice.png") }, fakeRunner);
+  expect(doc.pages[0].lines[0]).toEqual({ text: "发票号码 12345678", confidence: 0.96 });
+});
+```
 
-The file route accepts one multipart field named `file`; Task 8 limits browser concurrency to three without changing this one-file transaction boundary. The server obtains `userId` only from `requireSession()` and verifies batch ownership before storage.
+- [ ] **Step 2: Run both test suites and verify failure**
 
-Before creating a batch, count that user's batches created in the last minute and active items in `uploading|stored|queued|recognizing|review`. Reject with `RATE_LIMITED` when there are already 10 batches in the last minute or 100 active items; include a retry-after value and do not create partial rows.
+Run: `swift test --package-path native/InvoiceNative && pnpm vitest run tests/lib/native/client.test.ts`
 
-- [ ] **Step 4: 验证**
+Expected: FAIL because the package and client do not exist.
 
-Run: `pnpm test -- src/imports/service.test.ts && pnpm typecheck`
+- [ ] **Step 3: Implement PDFKit/Vision and Security.framework commands**
 
-Expected: valid fixtures are stored; invalid files never call `ObjectStore.put()`。
+Use `PDFDocument.string` first; if meaningful text is absent, render each PDF page at 2× scale and run `VNRecognizeTextRequest` with recognition level `.accurate` and languages `zh-Hans`, `zh-Hant`, `en-US`. Read every command from stdin and emit exactly one JSON response. Keychain commands use `SecItemAdd`, `SecItemCopyMatching`, and `SecItemDelete`; secrets enter through stdin and never through command arguments or stderr.
 
-- [ ] **Step 5: 提交**
+```ts
+export type NativeDocument = {
+  source: "pdf-text" | "vision-image" | "vision-pdf";
+  pages: Array<{ index: number; lines: Array<{ text: string; confidence: number }> }>;
+};
+```
+
+- [ ] **Step 4: Verify the native binary and Node adapter**
+
+Run: `swift test --package-path native/InvoiceNative && swift build -c release --package-path native/InvoiceNative && pnpm vitest run tests/lib/native && pnpm typecheck`
+
+Expected: PASS; `strings`/process assertions show no supplied test secret in arguments or logs.
+
+- [ ] **Step 5: Commit and push the native helper**
 
 ```bash
-git add src/imports src/app/api/imports
-git commit -m "feat: add validated batch uploads"
+git add native src/lib/native tests/lib/native package.json pnpm-lock.yaml scripts/install.mjs
+git commit -m "feat: add macos vision recognition helper"
+git push origin HEAD
 ```
 
----
-
-### Task 3: 在 OCR 前阻止完全重复文件
+### Task 2: 文件校验、落盘与完全重复拦截
 
 **Files:**
-- Create: `src/imports/duplicate-file.ts`
-- Create: `src/imports/duplicate-file.test.ts`
-- Modify: `src/imports/service.ts`
+- Create: `src/lib/imports/types.ts`, `src/lib/imports/validate-file.ts`, `src/lib/imports/store-file.ts`
+- Create: `src/lib/imports/repository.ts`
+- Create: `src/app/api/imports/files/route.ts`
+- Test: `tests/lib/imports/validate-file.test.ts`, `tests/lib/imports/store-file.test.ts`
+- Test: `tests/app/api/import-files.test.ts`
+- Create: `tests/fixtures/invoices/minimal.pdf`, `minimal.png`, `minimal.jpg`, `minimal.ofd`
 
 **Interfaces:**
-- Consumes: `userId`、SHA-256、正式发票表与未完成导入项。
-- Produces: `findFileDuplicate(userId, sha256): Promise<{ invoiceId?: string; importItemId?: string } | null>`。
+- Produces: `validateInvoiceFile(input: FileProbe): ValidatedFile`
+- Produces: `storeSourceFile(input: ReadableStream, meta: ValidatedFile, paths: WorkPaths): Promise<StoredSource>`
+- Produces: `POST /api/imports/files` with one multipart field `file`
+- Produces response `201 { sourceFileId, status: "queued" }`, `409 { code: "DUPLICATE_FILE", existingId }`, or typed 4xx
 
-- [ ] **Step 1: 写所有权隔离测试**
+- [ ] **Step 1: Write failing magic-byte and duplicate tests**
 
 ```ts
-test("does not treat another user's hash as a duplicate", async () => {
-  await seedInvoice({ userId: "u2", sha256: HASH });
-  expect(await findFileDuplicate("u1", HASH)).toBeNull();
+it.each([
+  ["invoice.pdf", "%PDF-", "pdf"],
+  ["invoice.png", "89504e470d0a1a0a", "png"],
+  ["invoice.jpg", "ffd8ff", "jpeg"]
+])("accepts %s only when extension and signature agree", (_, signature, format) => {
+  expect(validateInvoiceFile(probe({ name: _, signature }))).toMatchObject({ format });
 });
 
-test("returns the current user's original invoice", async () => {
-  const invoice = await seedInvoice({ userId: "u1", sha256: HASH });
-  expect(await findFileDuplicate("u1", HASH)).toEqual({ invoiceId: invoice.id });
+it("rejects the same sha256 before a second managed copy is committed", async () => {
+  const first = await storeFixture("minimal.pdf");
+  await expect(storeFixture("minimal.pdf")).rejects.toMatchObject({ code: "DUPLICATE_FILE", existingId: first.id });
 });
 ```
 
-- [ ] **Step 2: 运行数据库集成测试验证失败**
+- [ ] **Step 2: Run focused import tests**
 
-Run: `DATABASE_URL=$DATABASE_URL_TEST pnpm test -- src/imports/duplicate-file.test.ts`
+Run: `pnpm vitest run tests/lib/imports tests/app/api/import-files.test.ts`
 
-Expected: FAIL，查询函数不存在。
+Expected: FAIL because validation and storage modules are missing.
 
-- [ ] **Step 3: 实现查重事务**
+- [ ] **Step 3: Implement bounded streaming and atomic file commit**
 
-Query current user's confirmed invoices first, then active import items in states `stored|queued|recognizing|review`. When found, mark the new item `duplicate_blocked`, save a reason `same_sha256`, delete the newly stored redundant object, and do not enqueue OCR.
+Compare declared size with free disk space before accepting the stream, requiring file size plus 50 MiB safety space. Reject after 20 MiB while streaming to `invoices/.tmp/<uuid>`, compute SHA-256 during the same pass, fsync, insert the source row, then rename to `invoices/YYYY-MM/<uuid>.<ext>`. For OFD require ZIP magic plus an `OFD.xml` entry. On any error close/unlink the temp file; never modify the browser-selected original.
 
-```ts
-export async function findFileDuplicate(userId: string, sha256: string) {
-  const [invoice] = await db.select({ invoiceId: invoices.id }).from(invoices)
-    .where(and(eq(invoices.userId, userId), eq(invoices.sha256, sha256))).limit(1);
-  if (invoice) return invoice;
-  const [item] = await db.select({ importItemId: importItems.id }).from(importItems)
-    .innerJoin(importBatches, eq(importItems.batchId, importBatches.id))
-    .where(and(eq(importBatches.userId, userId), eq(importItems.sha256, sha256), inArray(importItems.state, ["stored", "queued", "recognizing", "review"]))).limit(1);
-  return item ?? null;
-}
-```
+- [ ] **Step 4: Verify valid, invalid, oversized, and duplicate cases**
 
-- [ ] **Step 4: 验证**
+Run: `pnpm vitest run tests/lib/imports tests/app/api/import-files.test.ts && pnpm typecheck`
 
-Run: `DATABASE_URL=$DATABASE_URL_TEST pnpm test -- src/imports/duplicate-file.test.ts`
+Expected: PASS; the oversized fixture leaves no `.tmp` file and the duplicate response contains the original internal ID.
 
-Expected: PASS；断言队列发送函数未调用。
-
-- [ ] **Step 5: 提交**
+- [ ] **Step 5: Commit and push file ingestion**
 
 ```bash
-git add src/imports
-git commit -m "feat: block duplicate invoice files"
+git add src/lib/imports src/app/api/imports tests/lib/imports tests/app/api/import-files.test.ts tests/fixtures/invoices
+git commit -m "feat: validate and store local invoice files"
+git push origin HEAD
 ```
 
----
-
-### Task 4: 定义 OCR 合约与固定响应实现
+### Task 3: OFD 本地解析与统一文字文档
 
 **Files:**
-- Create: `src/ocr/types.ts`
-- Create: `src/ocr/provider.ts`
-- Create: `src/ocr/fake-provider.ts`
-- Create: `src/ocr/fake-provider.test.ts`
-- Create: `src/ocr/index.ts`
+- Create: `src/lib/ofd/types.ts`, `src/lib/ofd/parse-ofd.ts`, `src/lib/ofd/extract-images.ts`
+- Create: `src/lib/recognition/document.ts`, `src/lib/recognition/local-recognizer.ts`
+- Test: `tests/lib/ofd/parse-ofd.test.ts`, `tests/lib/recognition/local-recognizer.test.ts`
+- Create: `tests/fixtures/invoices/text.ofd`, `image-page.ofd`
 
 **Interfaces:**
-- Consumes: 私有对象的短期下载 URL。
-- Produces: `OcrProvider.recognize(input): Promise<OcrResponse>`，供应商无关的标准草稿数组。
+- Produces: `parseOfd(path: string): Promise<OfdDocument>`
+- Produces: `recognizeLocal(source: StoredSource): Promise<RecognitionDocument>`
+- Produces: `RecognitionDocument = { engine: "pdf-text"|"vision"|"ofd-text"|"ofd-image"; pages: RecognitionPage[]; warnings: string[] }`
 
-- [ ] **Step 1: 写合约测试**
+- [ ] **Step 1: Write failing OFD and recognizer-order tests**
 
 ```ts
-test("fake provider returns normalized drafts without vendor fields", async () => {
-  const provider = new FakeOcrProvider([fixtureDraft]);
-  const result = await provider.recognize({ fileUrl: "https://signed.test/a.pdf", fileType: "pdf" });
-  expect(result.drafts[0]).toMatchObject({ type: "vat_normal", totalAmount: "128.00" });
-  expect(JSON.stringify(result)).not.toContain("VatInvoiceInfos");
+it("extracts ordered TextCode content from OFD XML", async () => {
+  const doc = await parseOfd(fixture("text.ofd"));
+  expect(doc.pages[0].text).toContain("销售方名称：示例科技有限公司");
+});
+
+it("prefers a PDF text layer and does not invoke Vision", async () => {
+  const result = await recognizeLocal(pdfSource, { native: fakeNativePdfText, ofd: fakeOfd });
+  expect(result.engine).toBe("pdf-text");
+  expect(fakeNativePdfText.visionCalls).toBe(0);
 });
 ```
 
-- [ ] **Step 2: 运行测试验证失败**
+- [ ] **Step 2: Verify both tests fail**
 
-Run: `pnpm test -- src/ocr/fake-provider.test.ts`
+Run: `pnpm vitest run tests/lib/ofd tests/lib/recognition/local-recognizer.test.ts`
 
-Expected: FAIL，OCR 类型不存在。
+Expected: FAIL because the OFD parser and recognizer are absent.
 
-- [ ] **Step 3: 实现稳定接口**
+- [ ] **Step 3: Implement safe ZIP/XML extraction and fallback order**
+
+Reject encrypted entries, absolute paths, `..`, more than 2,000 entries, or uncompressed content above 100 MiB. Resolve `OFD.xml → DocRoot → Pages/Page → Content.xml`, collect `TextCode` in page/position order, and extract only referenced PNG/JPEG resources. If no useful text exists, pass each referenced page image to Vision; if a vector-only page cannot be represented, return warning `OFD_PAGE_REQUIRES_MANUAL_OR_CLOUD`.
+
+- [ ] **Step 4: Verify parsers and no-network guard**
+
+Run: `pnpm vitest run tests/lib/ofd tests/lib/recognition && pnpm typecheck`
+
+Expected: PASS; a test replaces global `fetch` with a throwing stub and local recognition still succeeds.
+
+- [ ] **Step 5: Commit and push local document recognition**
+
+```bash
+git add src/lib/ofd src/lib/recognition tests/lib/ofd tests/lib/recognition tests/fixtures/invoices
+git commit -m "feat: add offline pdf and ofd recognition pipeline"
+git push origin HEAD
+```
+
+### Task 4: 发票字段解析、标准化与置信度
+
+**Files:**
+- Create: `src/lib/recognition/fields.ts`, `src/lib/recognition/parse-fields.ts`
+- Create: `src/lib/recognition/normalize.ts`, `src/lib/recognition/confidence.ts`
+- Create: `src/lib/recognition/fixtures.ts`
+- Test: `tests/lib/recognition/parse-fields.test.ts`, `tests/lib/recognition/confidence.test.ts`
+
+**Interfaces:**
+- Produces: `InvoiceFields`, `InvoiceFieldKey`, `ParsedInvoiceDraft`
+- Produces: `parseInvoiceFields(document: RecognitionDocument): ParsedInvoiceDraft`
+- Produces: `requiresReview(draft: ParsedInvoiceDraft): InvoiceFieldKey[]`
+
+- [ ] **Step 1: Write table-driven failing field tests**
 
 ```ts
-export type RecognizedInvoiceDraft = {
-  type: InvoiceType | null;
-  invoiceDate: string | null;
+it.each([
+  ["开票日期：2026年08月28日", "issueDate", "2026-08-28"],
+  ["发票号码：25112000000018475031", "invoiceNumber", "25112000000018475031"],
+  ["价税合计（小写）¥1,280.00", "totalAmountCents", 128000]
+])("parses %s", (line, key, expected) => {
+  expect(parseInvoiceFields(documentWith(line)).fields[key]).toBe(expected);
+});
+```
+
+- [ ] **Step 2: Confirm parser tests fail**
+
+Run: `pnpm vitest run tests/lib/recognition/parse-fields.test.ts tests/lib/recognition/confidence.test.ts`
+
+Expected: FAIL because `parseInvoiceFields` is missing.
+
+- [ ] **Step 3: Implement explicit field and confidence types**
+
+```ts
+export type InvoiceFields = {
+  invoiceType: string | null;
+  issueDate: string | null;
   invoiceCode: string | null;
   invoiceNumber: string | null;
+  uniqueVoucherNumber: string | null;
   sellerName: string | null;
   buyerName: string | null;
-  amountWithoutTax: string | null;
-  taxAmount: string | null;
-  totalAmount: string | null;
-  confidence: Partial<Record<"type" | "invoiceDate" | "invoiceCode" | "invoiceNumber" | "sellerName" | "buyerName" | "amountWithoutTax" | "taxAmount" | "totalAmount", number>>;
+  amountExcludingTaxCents: number | null;
+  taxCents: number | null;
+  totalAmountCents: number | null;
 };
-
-export interface OcrProvider {
-  recognize(input: { fileUrl: string; fileType: "pdf" | "ofd" | "jpg" | "jpeg" | "png" }): Promise<{ requestId: string; drafts: RecognizedInvoiceDraft[]; sanitizedSummary: Record<string, unknown> }>;
-}
+export type ParsedInvoiceDraft = {
+  fields: InvoiceFields;
+  confidence: Record<keyof InvoiceFields, number>;
+  warnings: string[];
+};
 ```
 
-`getOcrProvider()` selects `fake` or `tencent` from validated environment only.
+Normalize full-width characters, whitespace, dates, currency separators and known invoice type aliases. Lower confidence when a regex-only match lacks a label, when OCR confidence is below 0.85, or when `不含税金额 + 税额 !== 价税合计` by more than 1 cent. Require review for date, type, seller, total and invoice/voucher number below 0.85 or null.
 
-- [ ] **Step 4: 验证**
+- [ ] **Step 4: Run parser and arithmetic consistency tests**
 
-Run: `pnpm test -- src/ocr/fake-provider.test.ts && pnpm typecheck`
+Run: `pnpm vitest run tests/lib/recognition && pnpm typecheck`
 
-Expected: PASS。
+Expected: PASS for all table cases; no amount calculation uses a floating-point accumulator.
 
-- [ ] **Step 5: 提交**
+- [ ] **Step 5: Commit and push field parsing**
 
 ```bash
-git add src/ocr
-git commit -m "feat: define vendor neutral OCR contract"
+git add src/lib/recognition tests/lib/recognition
+git commit -m "feat: parse and score invoice fields locally"
+git push origin HEAD
 ```
 
----
-
-### Task 5: 腾讯云通用票据识别适配器
+### Task 5: 草稿任务、业务重复与确认入库
 
 **Files:**
-- Create: `src/ocr/tencent-provider.ts`
-- Create: `src/ocr/tencent-mapper.ts`
-- Create: `src/ocr/tencent-mapper.test.ts`
-- Create: `src/ocr/fixtures/tencent-general-invoice.json`
-- Modify: `package.json`
+- Create: `src/lib/imports/service.ts`, `src/lib/imports/job-handler.ts`
+- Create: `src/lib/drafts/repository.ts`, `src/lib/drafts/service.ts`
+- Create: `src/lib/duplicates/business-match.ts`
+- Create: `src/app/api/imports/[id]/route.ts`, `src/app/api/imports/[id]/confirm/route.ts`
+- Test: `tests/lib/duplicates/business-match.test.ts`, `tests/lib/drafts/service.test.ts`
+- Test: `tests/app/api/confirm-draft.test.ts`
 
 **Interfaces:**
-- Consumes: 腾讯云 `RecognizeGeneralInvoice`、短期签名 URL。
-- Produces: 符合 `OcrProvider` 的 `TencentOcrProvider`；纯函数 `mapTencentResponse(response): OcrResponse`。
+- Produces: `processRecognitionJob(sourceFileId: string): Promise<void>`
+- Produces: `findBusinessDuplicates(fields: InvoiceFields): DuplicateCandidate[]`
+- Produces: `confirmDraft(input: ConfirmDraftInput): Promise<ConfirmedInvoice>`
+- Produces: `GET /api/imports/:id`, `POST /api/imports/:id/confirm`
 
-- [ ] **Step 1: 保存脱敏 fixture 并写映射测试**
+- [ ] **Step 1: Write failing duplicate and transaction tests**
 
 ```ts
-test("maps Tencent fields into the invoice draft", () => {
-  const result = mapTencentResponse(fixture);
-  expect(result.drafts).toEqual([expect.objectContaining({
-    type: "digital_normal", invoiceDate: "2026-08-28", invoiceNumber: "25112000000018475031",
-    sellerName: "北京某某科技有限公司", totalAmount: "1280.00"
-  })]);
+it("blocks equal code and number until a reason is supplied", async () => {
+  await seedInvoice({ invoiceCode: "011001", invoiceNumber: "12345678" });
+  await expect(confirmDraft({ draftId, edits: sameFields })).rejects.toMatchObject({ code: "DUPLICATE_INVOICE" });
+  const kept = await confirmDraft({ draftId, edits: sameFields, forceKeepReason: "同号的更正票，已核对原件" });
+  expect(kept.reimbursementStatus).toBe("pending");
 });
 ```
 
-- [ ] **Step 2: 运行测试验证失败**
+- [ ] **Step 2: Run focused duplicate and confirmation tests**
 
-Run: `pnpm test -- src/ocr/tencent-mapper.test.ts`
+Run: `pnpm vitest run tests/lib/duplicates tests/lib/drafts tests/app/api/confirm-draft.test.ts`
 
-Expected: FAIL，映射器不存在。
+Expected: FAIL because matching and confirmation services do not exist.
 
-- [ ] **Step 3: 安装 SDK 并实现适配器**
+- [ ] **Step 3: Implement job-to-draft and atomic confirmation**
 
-Run: `pnpm add tencentcloud-sdk-nodejs-ocr`
+The recognition handler stores normalized fields/confidence but not full OCR text. When every local recognizer fails, it still creates an editable empty draft with warning `LOCAL_RECOGNITION_FAILED`, enabling pure manual entry. Exact code+number is a hard match; when code is absent, match normalized number+date+total+type and seller. Confirmation validates all critical fields, requires a nonblank reason of at least 4 characters for force keep, and writes invoice, duplicate decision and initial status event in one transaction.
 
-```ts
-const response = await client.RecognizeGeneralInvoice({
-  ImageUrl: input.fileUrl,
-  EnableMultiplePage: input.fileType === "pdf",
-  EnablePdf: input.fileType === "pdf",
-});
-return mapTencentResponse(response);
-```
+- [ ] **Step 4: Verify failure isolation and duplicate evidence**
 
-Map each Tencent invoice kind explicitly to `InvoiceType`; unknown kinds become `other`. Normalize currency and date through domain functions. `sanitizedSummary` may contain kind names, field-presence booleans and page counts, but not complete OCR text. Preserve `RequestId` for support diagnostics.
+Run: `pnpm vitest run tests/lib/imports tests/lib/duplicates tests/lib/drafts tests/app/api/confirm-draft.test.ts && pnpm typecheck`
 
-- [ ] **Step 4: 验证映射与类型**
+Expected: PASS; one failed recognition job does not alter another source/draft.
 
-Run: `pnpm test -- src/ocr/tencent-mapper.test.ts && pnpm typecheck`
-
-Expected: PASS；测试不调用真实腾讯云。
-
-- [ ] **Step 5: 提交**
+- [ ] **Step 5: Commit and push the draft workflow**
 
 ```bash
-git add package.json pnpm-lock.yaml src/ocr
-git commit -m "feat: integrate Tencent invoice OCR adapter"
+git add src/lib/imports src/lib/drafts src/lib/duplicates src/app/api/imports tests/lib tests/app/api/confirm-draft.test.ts
+git commit -m "feat: review and confirm recognized invoices"
+git push origin HEAD
 ```
 
----
-
-### Task 6: pg-boss 识别队列与重试
+### Task 6: 手动腾讯云兜底与钥匙串设置
 
 **Files:**
-- Create: `src/jobs/boss.ts`
-- Create: `src/jobs/queues.ts`
-- Create: `src/jobs/recognize-invoice.ts`
-- Create: `src/jobs/recognize-invoice.test.ts`
-- Create: `src/worker.ts`
-- Modify: `src/imports/service.ts`
-- Modify: `package.json`
+- Create: `src/lib/cloud-ocr/provider.ts`, `src/lib/cloud-ocr/tencent.ts`, `src/lib/cloud-ocr/map-tencent.ts`
+- Create: `src/lib/cloud-ocr/credentials.ts`, `src/lib/cloud-ocr/service.ts`
+- Create: `src/app/api/cloud-ocr/settings/route.ts`
+- Create: `src/app/api/imports/[id]/cloud-recognition/route.ts`
+- Test: `tests/lib/cloud-ocr/tencent.test.ts`, `tests/lib/cloud-ocr/service.test.ts`
+- Test: `tests/app/api/cloud-recognition.test.ts`
 
 **Interfaces:**
-- Consumes: `importItemId`、ObjectStore、OcrProvider。
-- Produces: queue `invoice-recognize`；`handleRecognizeInvoice({ importItemId })`。
+- Produces: `CloudOcrProvider.recognize(input: CloudRecognitionInput): Promise<CloudRecognitionResult>`
+- Produces: `POST /api/cloud-ocr/settings` storing SecretId/SecretKey in Keychain
+- Produces: `POST /api/imports/:id/cloud-recognition` body `{ confirmedFileId: string; provider: "tencent" }`
+- Consumes: Tencent `RecognizeGeneralInvoice`, API version `2018-11-19`, endpoint `ocr.tencentcloudapi.com`
 
-- [ ] **Step 1: 写 worker 状态测试**
+- [ ] **Step 1: Write failing explicit-confirmation and adapter tests**
 
 ```ts
-test("moves an item from queued to review", async () => {
-  const item = await seedStoredItem();
-  fakeProvider.setDrafts([fixtureDraft]);
-  await handleRecognizeInvoice({ importItemId: item.id });
-  expect(await getItemState(item.id)).toBe("review");
-  expect(await countDrafts(item.id)).toBe(1);
+it("never calls the provider without a matching confirmed file id", async () => {
+  await expect(requestCloudRecognition({ invoiceId, confirmedFileId: "other", provider: "tencent" }))
+    .rejects.toMatchObject({ code: "CLOUD_CONFIRMATION_MISMATCH" });
+  expect(fakeProvider.calls).toHaveLength(0);
+});
+
+it("sends base64 bytes to RecognizeGeneralInvoice", async () => {
+  await provider.recognize({ bytes: Buffer.from("fixture"), format: "pdf" });
+  expect(client.RecognizeGeneralInvoice).toHaveBeenCalledWith({
+    ImageBase64: Buffer.from("fixture").toString("base64"), EnableMultiplePage: true
+  });
 });
 ```
 
-- [ ] **Step 2: 运行集成测试验证失败**
+- [ ] **Step 2: Run cloud tests and verify no provider call occurs**
 
-Run: `DATABASE_URL=$DATABASE_URL_TEST pnpm test -- src/jobs/recognize-invoice.test.ts`
+Run: `pnpm vitest run tests/lib/cloud-ocr tests/app/api/cloud-recognition.test.ts`
 
-Expected: FAIL，handler 不存在。
+Expected: FAIL because the provider and confirmation endpoint are missing.
 
-- [ ] **Step 3: 实现幂等 worker**
+- [ ] **Step 3: Implement Keychain credentials and Tencent mapping**
 
-Install `pg-boss`, add scripts `worker:dev` and `worker`. Create queue with `retryLimit: 3`, `retryDelay: 5`, `retryBackoff: true`, `expireInSeconds: 300`, and group concurrency `2` keyed by user ID. Handler locks the import item, returns without duplication if state is already `review|confirmed|duplicate_blocked`, updates to `recognizing`, creates a 180-second object URL, invokes OCR, replaces drafts in one transaction, and updates to `review`. On terminal failure, store stable error code and a user-action message without secrets.
+Store SecretId and SecretKey as separate Keychain accounts through the native stdin protocol. Use `RecognizeGeneralInvoice` with `ImageBase64`, `EnableMultiplePage: true`; map `MixedInvoiceItems` into `InvoiceFields`, save only `RequestId`, normalized fields and warnings, and never persist the base64 request or raw response. Provider errors become stable local codes plus the Tencent RequestId when present.
 
-```ts
-export async function handleRecognizeInvoice({ importItemId }: { importItemId: string }) {
-  const item = await lockImportItem(importItemId);
-  if (["review", "confirmed", "duplicate_blocked"].includes(item.state)) return;
-  await setImportItemState(item.id, "recognizing");
-  const fileUrl = await objectStore.signedDownloadUrl(item.storageKey, 180);
-  const response = await ocrProvider.recognize({ fileUrl, fileType: item.extension });
-  await replaceDraftsAndState({ item, response, nextState: "review" });
-}
-```
+- [ ] **Step 4: Verify the manual-only network boundary**
 
-- [ ] **Step 4: 验证重试与幂等性**
+Run: `pnpm vitest run tests/lib/cloud-ocr tests/app/api/cloud-recognition.test.ts && pnpm typecheck`
 
-Run: `DATABASE_URL=$DATABASE_URL_TEST pnpm test -- src/jobs/recognize-invoice.test.ts`
+Expected: PASS; tests prove local recognition does not construct a Tencent client, mismatched confirmation is 409, and credentials do not appear in SQLite/log snapshots.
 
-Expected: PASS；重复执行 handler 不会创建第二组草稿。
-
-- [ ] **Step 5: 提交**
+- [ ] **Step 5: Commit and push cloud fallback**
 
 ```bash
-git add package.json pnpm-lock.yaml src/jobs src/worker.ts src/imports/service.ts
-git commit -m "feat: process OCR jobs asynchronously"
+git add src/lib/cloud-ocr src/app/api/cloud-ocr src/app/api/imports tests/lib/cloud-ocr tests/app/api/cloud-recognition.test.ts package.json pnpm-lock.yaml
+git commit -m "feat: add confirmed tencent ocr fallback"
+git push origin HEAD
 ```
 
----
-
-### Task 7: 业务重复检测与确认入库
+### Task 7: 上传、进度与校对页面
 
 **Files:**
-- Create: `src/invoices/duplicate-business.ts`
-- Create: `src/invoices/confirm-draft.ts`
-- Create: `src/invoices/confirm-draft.test.ts`
-- Create: `src/app/api/drafts/[draftId]/confirm/route.ts`
+- Create: `src/app/upload/page.tsx`, `src/components/upload/upload-dropzone.tsx`
+- Create: `src/components/upload/import-list.tsx`, `src/components/upload/draft-editor.tsx`
+- Create: `src/components/upload/cloud-confirm-dialog.tsx`, `src/components/settings/cloud-ocr-settings.tsx`
+- Create: `src/lib/client/import-api.ts`
+- Test: `tests/components/upload/upload-dropzone.test.tsx`, `tests/components/upload/draft-editor.test.tsx`
+- Test: `tests/e2e/import-review.spec.ts`
 
 **Interfaces:**
-- Consumes: 草稿、当前用户正式发票。
-- Produces: `findBusinessDuplicates(userId, draft)`；`confirmDraft(input) -> { invoiceId } | DuplicateBlocked`。
+- Consumes: import upload/status/confirm APIs and explicit cloud confirmation API
+- Produces: browser batch controller with at most 100 files and upload concurrency 2
+- Produces: `pnpm test:e2e --grep @ingestion`
 
-- [ ] **Step 1: 写精确与疑似重复测试**
-
-```ts
-test("blocks matching code and number", async () => {
-  await seedInvoice({ userId: "u1", invoiceCode: "1100", invoiceNumber: "1234" });
-  await expect(confirmDraft({ userId: "u1", draftId, values })).rejects.toMatchObject({ code: "DUPLICATE_BLOCKED" });
-});
-
-test("allows force keep with a reason", async () => {
-  const result = await confirmDraft({ userId: "u1", draftId, values, forceKeep: { reason: "同号但属于不同电子客票" } });
-  expect(result.invoiceId).toBeTruthy();
-});
-```
-
-- [ ] **Step 2: 运行测试验证失败**
-
-Run: `DATABASE_URL=$DATABASE_URL_TEST pnpm test -- src/invoices/confirm-draft.test.ts`
-
-Expected: FAIL，确认服务不存在。
-
-- [ ] **Step 3: 实现规则和事务**
-
-Exact duplicate: same normalized `invoiceCode + invoiceNumber`; when code is absent, same `invoiceNumber + type`. Suspected duplicate: same date, exact cent amount, normalized seller name, and same type. Return reasons and candidate summary. Validate all required fields with Zod, verify draft ownership, create formal invoice with status `pending`, mark draft/item confirmed, and record force-keep reason in one transaction.
-
-```ts
-const confirmDraftInput = z.object({
-  draftId: z.string().uuid(), type: z.enum(invoiceTypes), invoiceDate: z.iso.date(),
-  invoiceCode: z.string().trim().nullable(), invoiceNumber: z.string().trim().min(1),
-  sellerName: z.string().trim().min(1), buyerName: z.string().trim().nullable(),
-  amountWithoutTax: moneyString.nullable(), taxAmount: moneyString.nullable(), totalAmount: moneyString,
-  forceKeep: z.object({ reason: z.string().trim().min(5).max(200) }).optional(),
-});
-```
-
-- [ ] **Step 4: 验证**
-
-Run: `DATABASE_URL=$DATABASE_URL_TEST pnpm test -- src/invoices/confirm-draft.test.ts`
-
-Expected: PASS；跨用户相同号码不构成重复。
-
-- [ ] **Step 5: 提交**
-
-```bash
-git add src/invoices src/app/api/drafts
-git commit -m "feat: confirm reviewed invoices with duplicate guard"
-```
-
----
-
-### Task 8: 上传进度、校对页与阶段端到端测试
-
-**Files:**
-- Modify: `package.json`
-- Modify: `pnpm-lock.yaml`
-- Create: `src/app/(workbench)/upload/page.tsx`
-- Create: `src/components/upload/invoice-uploader.tsx`
-- Create: `src/components/upload/invoice-uploader.test.tsx`
-- Create: `src/app/(workbench)/imports/[batchId]/page.tsx`
-- Create: `src/components/review/invoice-review-form.tsx`
-- Create: `src/components/review/invoice-review-form.test.tsx`
-- Create: `src/app/api/imports/items/[itemId]/manual-draft/route.ts`
-- Create: `playwright.config.ts`
-- Create: `e2e/helpers.ts`
-- Create: `e2e/ingestion.spec.ts`
-
-**Interfaces:**
-- Consumes: import APIs、draft confirm API。
-- Produces: 最大并发 3 的逐文件上传 UI、状态轮询、低置信度标黄、重复阻止对话框。
-
-- [ ] **Step 1: 写上传队列组件测试**
+- [ ] **Step 1: Write failing UI tests**
 
 ```tsx
-test("keeps successful files when one upload fails", async () => {
-  render(<InvoiceUploader upload={fakeUpload({ "bad.pdf": "NETWORK_ERROR" })} />);
-  await selectFiles([goodPdf, badPdf]);
-  expect(await screen.findByText("good.pdf · 已上传")).toBeVisible();
-  expect(await screen.findByRole("button", { name: "重试 bad.pdf" })).toBeVisible();
+it("rejects the 101st file and keeps valid files available", async () => {
+  render(<UploadDropzone onAccepted={accepted} />);
+  await selectFiles(makeFiles(101));
+  expect(screen.getByText("单批最多选择 100 个文件")).toBeVisible();
+  expect(accepted).toHaveBeenCalledWith(expect.arrayContaining(makeExpectedFirst100()));
+});
+
+it("requires a second confirmation before cloud recognition", async () => {
+  render(<CloudConfirmDialog invoice={invoice} onConfirm={confirm} />);
+  expect(screen.getByText(/将发送给腾讯云/)).toBeVisible();
+  expect(confirm).not.toHaveBeenCalled();
 });
 ```
 
-- [ ] **Step 2: 运行测试验证失败**
+- [ ] **Step 2: Run component tests and observe failure**
 
-Run: `pnpm test -- src/components/upload src/components/review`
+Run: `pnpm vitest run tests/components/upload`
 
-Expected: FAIL，页面组件不存在。
+Expected: FAIL because upload components do not exist.
 
-- [ ] **Step 3: 实现上传和校对交互**
+- [ ] **Step 3: Implement per-file progress and accessible review forms**
 
-Run: `pnpm add -D @playwright/test && pnpm exec playwright install chromium webkit`
+Show `等待上传/校验中/本地识别中/待校对/重复/失败/已入库`. Poll only active IDs with exponential backoff capped at 2 seconds. A locally failed item offers `手工录入` and opens the empty draft editor. Mark required or confidence <0.85 fields in yellow with text labels. The cloud button opens a dialog naming the file, provider and affected draft fields; only its final confirm calls the endpoint.
 
-Use `accept=".pdf,.ofd,.jpg,.jpeg,.png"`, show per-file states, preserve the batch after refresh, and poll only while items are non-terminal. Review form fields must expose confidence through text and color; required low-confidence fields show `需要确认`. Duplicate dialog shows reason, original invoice summary, `返回修改`, and a separate `仍然保留` action requiring a reason.
-
-```ts
-async function uploadWithConcurrency(files: File[], upload: (file: File) => Promise<void>) {
-  const queue = [...files];
-  await Promise.all(Array.from({ length: Math.min(3, queue.length) }, async () => {
-    while (queue.length) { const file = queue.shift(); if (file) await upload(file).catch(() => undefined); }
-  }));
-}
-```
-
-For an item in terminal `failed` state, show `重试识别` and `人工录入`. The manual-draft route verifies ownership and failed state, creates one empty draft linked to the original file, changes the item to `review`, and never fabricates confidence values. The same required-field validation applies before confirmation.
-
-`e2e/helpers.ts` exports `loginAsTestUser(page)`, which creates or reuses `e2e@example.com` through a test-only seed endpoint enabled only when `NODE_ENV=test`, then signs in through the UI. It also exports `uploadFixture(page, path)` and `confirmRecognizedDraft(page)`. Production builds must return 404 from the seed endpoint.
-
-- [ ] **Step 4: 写并运行端到端用例**
+- [ ] **Step 4: Add the end-to-end ingestion journey**
 
 ```ts
-test("uploads, reviews and confirms an invoice", async ({ page }) => {
-  await loginAsTestUser(page);
+test("@ingestion imports, reviews, blocks duplicate, and confirms", async ({ page }) => {
   await page.goto("/upload");
-  await page.getByLabel("选择发票文件").setInputFiles("e2e/fixtures/invoice.pdf");
-  await expect(page.getByText("等待校对")).toBeVisible();
-  await page.getByLabel("开票方名称").fill("北京某某科技有限公司");
+  await page.getByLabel("选择发票文件").setInputFiles("tests/fixtures/invoices/minimal.pdf");
+  await expect(page.getByText("待校对")).toBeVisible();
+  await page.getByLabel("开票方名称").fill("示例科技有限公司");
   await page.getByRole("button", { name: "确认入库" }).click();
   await expect(page.getByText("已入库")).toBeVisible();
 });
 ```
 
-Run: `pnpm playwright test e2e/ingestion.spec.ts --project=chromium`
+- [ ] **Step 5: Run the complete ingestion gate**
 
-Expected: PASS with `OCR_DRIVER=fake` and `OBJECT_STORE_DRIVER=memory`。
+Run: `pnpm vitest run tests/components/upload && pnpm test:e2e --grep @ingestion && pnpm verify && git diff --check`
 
-- [ ] **Step 5: 全量验证并提交**
+Expected: PASS; no test uses a real cloud credential or sends an external request.
 
-Run: `pnpm lint && pnpm typecheck && pnpm test && pnpm playwright test e2e/ingestion.spec.ts --project=chromium && pnpm build`
-
-Expected: 全部 PASS。
+- [ ] **Step 6: Commit and push the completed ingestion flow**
 
 ```bash
-git add src/app src/components playwright.config.ts e2e package.json pnpm-lock.yaml
-git commit -m "feat: complete invoice ingestion workflow"
+git add src/app/upload src/components/upload src/components/settings src/lib/client tests/components/upload tests/e2e/import-review.spec.ts
+git commit -m "feat: add invoice upload and review workspace"
+git push origin HEAD
 ```

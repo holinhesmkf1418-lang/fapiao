@@ -1,67 +1,98 @@
-# 发票工作台实施路线图
+# 本地发票工作台实施路线图
 
-**目标：** 按四个可独立验收的阶段交付个人发票工作台，最终覆盖上传、识别、查重、校对、管理、统计和导出闭环。
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**产品设计：** `docs/product-design.md`
+**Goal:** 按四个可独立验收阶段，把已确认的本地版产品设计实现为可双击启动的个人发票工作台。
 
-## 技术基线
+**Architecture:** 以单进程 Next.js、本地 SQLite/文件目录和 Swift 原生助手为核心；默认识别链路完全离线，腾讯云 OCR 只作为单张发票的手动二次确认兜底。阶段之间只通过已经定义并测试的接口衔接。
 
-- Node.js：`>=22.12 <27`，开发机当前为 `24.12.0`。
-- 包管理器：pnpm `9.15.9`。
-- Web：Next.js 16 App Router、React 19.2、TypeScript 5。
-- 数据库：PostgreSQL 16、Drizzle ORM、`pg`。
-- 认证：Better Auth，邮箱密码登录，数据库会话。
-- 异步任务：pg-boss，共用 PostgreSQL，不增加 Redis。
-- 文件存储：S3 兼容对象存储，开发和测试使用内存适配器。
-- OCR：统一 `OcrProvider` 接口；生产适配腾讯云 `RecognizeGeneralInvoice`，测试使用固定响应适配器。
-- 导出：ExcelJS、Archiver。
-- 图表：Recharts。
-- 测试：Vitest、Testing Library、Playwright；数据库集成测试使用独立 `DATABASE_URL_TEST`。
+**Tech Stack:** Node.js 24、pnpm 9.15、Next.js 16、React 19、TypeScript、SQLite/Drizzle、Swift 6/Vision/PDFKit/Security.framework、Vitest、Playwright
+
+**Spec:** `docs/product-design.md`
+
+## Global Constraints
+
+- 从 `main` 当前提交创建新的本地版工作树；不得基于旧 `feat/foundation` 的未完成云端脚手架继续开发。
+- 每个详细计划中的 Task 是最小评审与提交单元；通过该 Task 的测试后立即提交并推送。
+- 不把真实发票、OCR 原文、云端密钥、启动令牌、绝对来源路径或私有样本加入 Git。
+- 不增加登录、远程数据库、对象存储、远程队列、云部署、遥测或自动更新。
+- 阶段门禁失败时先修复当前阶段，不带失败进入下一阶段。
+
+---
 
 ## 阶段顺序
 
-1. [`2026-08-31-invoice-workbench-foundation.md`](./2026-08-31-invoice-workbench-foundation.md)
-   - 可运行的 Next.js 应用、数据库、认证、对象存储边界、应用外壳和 CI。
-   - 完成后可以登录并进入受保护的空工作台。
-2. [`2026-08-31-invoice-workbench-ingestion.md`](./2026-08-31-invoice-workbench-ingestion.md)
-   - 批量上传、文件查重、OCR 队列、腾讯云适配、业务查重和人工校对入库。
-   - 完成后可以把真实发票变成已确认的结构化记录。
-3. [`2026-08-31-invoice-workbench-management-dashboard.md`](./2026-08-31-invoice-workbench-management-dashboard.md)
-   - 发票列表、筛选、状态管理、统计接口、图表、删除和响应式体验。
-   - 完成后可以日常管理与查看报销进度。
-4. [`2026-08-31-invoice-workbench-export.md`](./2026-08-31-invoice-workbench-export.md)
-   - 导出预检、文件命名、Excel、ZIP、异步生成、限时下载、清理与端到端验收。
-   - 完成后达到产品设计中的完整 MVP 验收标准。
+| 顺序 | 详细计划 | 独立可验收结果 |
+| --- | --- | --- |
+| 1 | `2026-08-31-invoice-workbench-foundation.md` | 双击安装/启动/关闭；仅监听本机；SQLite、工作目录、令牌和任务队列可用 |
+| 2 | `2026-08-31-invoice-workbench-ingestion.md` | 支持五种格式上传、本地 OCR、查重、校对入库和手动云端兜底 |
+| 3 | `2026-08-31-invoice-workbench-management-dashboard.md` | 支持查询、三态报销管理、统计图表、原件预览和可恢复删除 |
+| 4 | `2026-08-31-invoice-workbench-export.md` | 支持规范 Excel/ZIP、自动/完整备份恢复、维护和最终闭环验收 |
 
-## 阶段门禁
+## 执行门禁
 
-- 每个阶段独立创建分支并按计划中的小任务提交。
-- 进入下一阶段前，必须通过 `pnpm lint`、`pnpm typecheck`、`pnpm test`；有端到端测试的阶段还需通过对应 Playwright 用例。
-- 所有数据库变更必须同时提交 Drizzle schema 与生成的 SQL migration。
-- 真实云端凭证只能通过环境变量提供，不能写入仓库、测试快照或日志。
-- OCR 供应商响应只能通过适配层进入业务代码，页面和数据库查询不得直接依赖腾讯云字段名。
-- 金额使用 PostgreSQL `numeric(14,2)` 与字符串边界类型，禁止使用 JavaScript 浮点数累计财务金额。
+- [ ] **Gate 0: 创建干净隔离工作树**
+
+Required skill: `superpowers:using-git-worktrees`.
+
+Expected: 新工作树 HEAD 等于 `origin/main`，`git status --short` 为空，旧 `.worktrees/foundation` 不被修改。
+
+- [ ] **Gate 1: 基础设施完成**
+
+Run: `pnpm verify && pnpm test:e2e --grep @foundation`
+
+Expected: 构建通过；重复启动复用同一 PID；监听地址仅为 `127.0.0.1`。
+
+- [ ] **Gate 2: 上传识别完成**
+
+Run: `swift test --package-path native/InvoiceNative && pnpm verify && pnpm test:e2e --grep @ingestion`
+
+Expected: 本地链路在禁止外网的测试中通过；只有二次确认测试会调用模拟云端适配器。
+
+- [ ] **Gate 3: 管理统计完成**
+
+Run: `pnpm verify && pnpm test:e2e --grep '@management|@dashboard'`
+
+Expected: 明细、状态桶、类型桶和总金额全部按整数分对账；删除失败保留恢复证据。
+
+- [ ] **Gate 4: 导出备份与发布完成**
+
+Run: `pnpm verify:release`
+
+Expected: Excel/ZIP 与快照对账，备份哈希验证通过，完整本地闭环无非回环网络请求。
 
 ## 产品设计覆盖矩阵
 
 | 产品设计要求 | 实施位置 |
 | --- | --- |
-| 个人账号、数据隔离、响应式外壳 | 基础设施 Task 3、4、6 |
-| 多格式批量上传、20 MB/100 个限制 | 上传识别 Task 1、2、8 |
-| 文件指纹与业务重复检测 | 上传识别 Task 3、7 |
-| 云端 OCR、OFD/多票种、失败重试、人工录入 | 上传识别 Task 4、5、6、8 |
-| 低置信度校对与关键字段门禁 | 上传识别 Task 7、8 |
-| 发票查询、筛选、批量报销状态 | 管理统计 Task 1、2、4 |
-| 月份、类型、金额、状态统计与比例图 | 管理统计 Task 3、5 |
-| 原始发票安全删除 | 管理统计 Task 6 |
-| 命名、月份/类型目录、Excel 与 ZIP | 整理导出 Task 1—6 |
-| 限时下载、24 小时清理、重试 | 整理导出 Task 5、7 |
-| 浏览器、移动端、2 秒响应、安全与 95% OCR 验收 | 整理导出 Task 7 |
+| 双击启动、回环监听、端口回退 | 基础 Task 5–7 |
+| 工作目录、引导配置、SQLite/WAL | 基础 Task 2–3 |
+| 进程内并发 2、崩溃恢复 | 基础 Task 4 |
+| PDF/OFD/JPG/JPEG/PNG、本地 OCR | 上传识别 Task 1–4 |
+| 文件级/业务级重复和人工校对 | 上传识别 Task 2、5、7 |
+| 腾讯云手动二次确认兜底、钥匙串 | 上传识别 Task 1、6、7 |
+| 查询、三态报销、状态历史 | 管理统计 Task 1–4 |
+| 月份/类型/金额/状态图表与比例 | 管理统计 Task 3、5 |
+| 可恢复删除与启动重试 | 管理统计 Task 6 |
+| 文件命名、月份/类型目录、Excel/ZIP | 导出备份 Task 1–5 |
+| 每日 7 份备份、完整备份与恢复 | 导出备份 Task 6–7 |
+| 日志轮换、磁盘空间、发布验收 | 导出备份 Task 4、6、8 |
 
-## 官方依据
+## 技术依据
 
-- Next.js 16 要求 Node.js 20.9+，支持现代 Chrome、Edge 与 Safari：<https://nextjs.org/docs/app/getting-started/installation>
-- Better Auth 提供 Next.js、PostgreSQL、Drizzle 与邮箱密码登录集成：<https://better-auth.com/docs/installation>
-- pg-boss 使用 PostgreSQL 提供带重试的后台任务，并要求 Node.js 22.12+：<https://github.com/timgit/pg-boss>
-- 腾讯云通用票据识别支持多页 PDF、OFD 和常见报销票种：<https://cloud.tencent.com/document/api/866/90802>
-- Playwright 覆盖 Chromium、WebKit、Firefox 与移动设备模拟：<https://playwright.dev/docs/intro>
+- Apple Vision 的识别能力在实现时以本机 Swift SDK 编译测试为准，不引入外部 OCR 运行时。
+- 腾讯云手动兜底使用官方 `RecognizeGeneralInvoice`（API 版本 `2018-11-19`，域名 `ocr.tencentcloudapi.com`），支持图片、PDF 和 OFD；实现时仍以固定响应 fixture 测试，不在 CI 调用真实付费接口。
+- 云端供应商通过 `CloudOcrProvider` 接口隔离，核心草稿、查重和确认流程不依赖腾讯字段结构。
+
+## 提交与推送规则
+
+每个 Task 的最后一步必须按计划列出的文件精确暂存，并依次执行：
+
+```bash
+git diff --check
+git status --short
+git commit -m "<计划指定的信息>"
+git push origin HEAD
+```
+
+不得使用 `git add .` 把私有样本、运行数据、数据库、日志、导出包或密钥意外加入提交。每个阶段结束后在 GitHub 核对远程分支 SHA 与本地 HEAD 一致。

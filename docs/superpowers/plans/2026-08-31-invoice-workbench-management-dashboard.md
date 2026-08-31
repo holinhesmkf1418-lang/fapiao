@@ -1,398 +1,392 @@
-# 发票管理与统计工作台 Implementation Plan
+# 本地发票管理与统计 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 交付发票查询筛选、批量状态管理、金额统计、交互图表和安全删除功能。
+**Goal:** 提供发票查询、批量报销状态管理、统计总览、可访问图表和可恢复删除。
 
-**Architecture:** 所有筛选条件进入服务端查询对象，列表和统计复用同一过滤构造器，避免页面与图表口径分叉。状态变更与删除通过服务层执行所有权校验和事务，React Server Components 负责首屏数据，客户端组件只处理交互和图表。
+**Architecture:** 所有列表与统计共用一个类型化筛选对象和同一组 SQLite 查询，保证金额口径一致。删除使用“恢复记录 → 移入 macOS 废纸篓 → 数据库事务”的顺序；启动维护任务负责收敛未完成操作。
 
-**Tech Stack:** Next.js 16、Drizzle ORM、PostgreSQL、Zod、Recharts、Vitest、Testing Library、Playwright
+**Tech Stack:** Next.js、React、SQLite/Drizzle、Zod、Recharts、Testing Library、Vitest、Playwright
 
 **Spec:** `docs/product-design.md`
 
 ## Global Constraints
 
-- 所有金额统计使用价税合计，只统计当前用户正式入库的发票。
-- 默认范围为当前自然月，支持指定月份和全年。
-- 状态固定为待报销、报销中、已报销，允许纠正性回退。
-- 图表必须同时提供文字图例和数值，不只依赖颜色。
-- 列表和图表必须使用同一服务端过滤口径。
-- 删除成功必须同时删除业务记录、原始对象与识别关联；部分失败不能显示为成功。
+- 报销状态固定为 `待报销 → 报销中 → 已报销`，允许纠正性回退。
+- 总览与列表金额都按价税合计整数分聚合，不使用浮点数累计。
+- 支持月份、类型、报销状态和关键词筛选；图表点击必须能联动明细。
+- 图表同时显示文字图例、金额、数量和比例，不能只依靠颜色。
+- 删除只影响工作台管理副本，原始来源文件永远不受影响。
+- 管理副本只移入 macOS 废纸篓，不执行不可恢复删除。
+- 每个 Task 通过验证后独立提交并运行 `git push origin HEAD`。
 
 ---
 
-### Task 1: 发票查询对象、分页与筛选 API
+## File Structure
 
-**Files:**
-- Create: `src/invoices/query.ts`
-- Create: `src/invoices/query.test.ts`
-- Create: `src/app/api/invoices/route.ts`
+```text
+src/lib/invoices/filters.ts            # 列表与统计共用筛选对象
+src/lib/invoices/repository.ts         # 分页、详情、批量状态查询
+src/lib/invoices/status-service.ts     # 状态变更事务和历史
+src/lib/dashboard/query.ts             # 指标与图表聚合
+src/lib/deletion/                      # 废纸篓、恢复记录和启动重试
+src/app/api/invoices/                  # 列表、详情、状态、删除 API
+src/app/api/dashboard/                 # 统一统计 API
+src/app/invoices/                      # 发票管理页面
+src/app/page.tsx                       # 总览页面
+src/components/charts/                 # 可访问图表
+```
 
-**Interfaces:**
-- Consumes: `invoices`、当前会话用户。
-- Produces: `InvoiceFilters`；`listInvoices({ userId, filters, page, pageSize }): InvoicePage`。
-
-- [ ] **Step 1: 写筛选隔离测试**
+## Shared Interfaces
 
 ```ts
-test("filters by month, type and status for the current user", async () => {
-  await seedInvoice({ userId: "u1", date: "2026-08-01", type: "railway", status: "pending" });
-  await seedInvoice({ userId: "u1", date: "2026-07-01", type: "railway", status: "pending" });
-  await seedInvoice({ userId: "u2", date: "2026-08-01", type: "railway", status: "pending" });
-  const page = await listInvoices({ userId: "u1", filters: { month: "2026-08", type: "railway", status: "pending" }, page: 1, pageSize: 20 });
-  expect(page.total).toBe(1);
+export type ReimbursementStatus = "pending" | "reimbursing" | "reimbursed";
+export type InvoiceFilters = { month?: string; types: string[]; statuses: ReimbursementStatus[]; keyword?: string };
+export type InvoiceListItem = {
+  id: string; invoiceType: string; issueDate: string; invoiceNumber: string | null;
+  uniqueVoucherNumber: string | null; sellerName: string; totalAmountCents: number;
+  reimbursementStatus: ReimbursementStatus;
+};
+export type InvoicePage = { items: InvoiceListItem[]; nextCursor: string | null; totalCount: number };
+export type StatusChangeResult = { changed: number; unchanged: number };
+export type AmountBucket = { key: string; label: string; amountCents: number; count: number };
+export type DashboardData = {
+  totals: { amountCents: number; count: number };
+  byStatus: AmountBucket[]; byMonth: AmountBucket[]; byType: AmountBucket[];
+};
+export type RecoverySummary = { completed: number; cancelled: number; needsAttention: number };
+```
+
+### Task 1: 共用筛选、分页查询与原件预览
+
+**Files:**
+- Create: `src/lib/invoices/types.ts`, `src/lib/invoices/filters.ts`, `src/lib/invoices/repository.ts`
+- Create: `src/app/api/invoices/route.ts`, `src/app/api/invoices/[id]/route.ts`
+- Create: `src/app/api/invoices/[id]/file/route.ts`
+- Test: `tests/lib/invoices/repository.test.ts`, `tests/app/api/invoices.test.ts`
+
+**Interfaces:**
+- Produces: `InvoiceFilters = { month?: string; types: string[]; statuses: ReimbursementStatus[]; keyword?: string }`
+- Produces: `listInvoices(filters, page): Promise<InvoicePage>`
+- Produces: `GET /api/invoices`, `GET /api/invoices/:id`, `GET /api/invoices/:id/file`
+
+- [ ] **Step 1: Write failing filter and pagination tests**
+
+```ts
+it("applies month, type, status, and escaped keyword together", async () => {
+  await seedInvoices(sampleInvoices);
+  const page = await listInvoices({
+    month: "2026-08", types: ["增值税普通发票"], statuses: ["pending"], keyword: "示例%"
+  }, { cursor: null, limit: 20 });
+  expect(page.items.map((item) => item.id)).toEqual(["invoice-matching-literal-percent"]);
 });
 ```
 
-- [ ] **Step 2: 运行测试验证失败**
+- [ ] **Step 2: Run focused repository/API tests**
 
-Run: `DATABASE_URL=$DATABASE_URL_TEST pnpm test -- src/invoices/query.test.ts`
+Run: `pnpm vitest run tests/lib/invoices tests/app/api/invoices.test.ts`
 
-Expected: FAIL，查询模块不存在。
+Expected: FAIL because filters and repository do not exist.
 
-- [ ] **Step 3: 实现查询对象和分页结果**
+- [ ] **Step 3: Implement one validated query contract**
 
-```ts
-export const invoiceFiltersSchema = z.object({
-  month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).optional(),
-  year: z.coerce.number().int().min(2000).max(2100).optional(),
-  type: z.enum(invoiceTypes).optional(),
-  status: z.enum(invoiceStatuses).optional(),
-  q: z.string().trim().max(100).optional(),
-}).refine((value) => !(value.month && value.year), "month and year are mutually exclusive");
+Use Zod to accept `month` as `YYYY-MM`, repeated type/status values, keyword length 1–100, and cursor pagination. Escape `%`, `_`, and `\` before `LIKE ... ESCAPE '\'`. Return 50 rows by default and at most 200. The file route resolves the managed path with `assertInsideWorkRoot`, uses an inline content disposition, and never exposes the absolute path.
 
-export type InvoicePage = { items: InvoiceListItem[]; page: number; pageSize: number; total: number; totalPages: number };
-```
+- [ ] **Step 4: Verify filter combinations and containment**
 
-Build a shared `invoiceWhere(userId, filters)` that always starts with `eq(invoices.userId, userId)`. Search `q` against seller name, invoice number and invoice code using escaped `ILIKE`. Sort by invoice date descending then creation time descending. API page size options are 20, 50, 100; reject all other values.
+Run: `pnpm vitest run tests/lib/invoices tests/app/api/invoices.test.ts && pnpm typecheck`
 
-- [ ] **Step 4: 验证**
+Expected: PASS; invalid cursors are 400 and a forged outside path is 403.
 
-Run: `DATABASE_URL=$DATABASE_URL_TEST pnpm test -- src/invoices/query.test.ts && pnpm typecheck`
-
-Expected: PASS；无筛选条件也不能返回其他用户数据。
-
-- [ ] **Step 5: 提交**
+- [ ] **Step 5: Commit and push invoice queries**
 
 ```bash
-git add src/invoices/query.ts src/invoices/query.test.ts src/app/api/invoices
-git commit -m "feat: query and filter owned invoices"
+git add src/lib/invoices src/app/api/invoices tests/lib/invoices tests/app/api/invoices.test.ts
+git commit -m "feat: query and preview local invoices"
+git push origin HEAD
 ```
-
----
 
 ### Task 2: 单张与批量报销状态变更
 
 **Files:**
-- Modify: `src/db/schema/invoices.ts`
-- Create: `drizzle/0002_invoice_status_events.sql` (generated)
-- Create: `src/invoices/update-status.ts`
-- Create: `src/invoices/update-status.test.ts`
+- Create: `src/lib/invoices/status-service.ts`
 - Create: `src/app/api/invoices/status/route.ts`
+- Test: `tests/lib/invoices/status-service.test.ts`, `tests/app/api/invoice-status.test.ts`
 
 **Interfaces:**
-- Consumes: 当前用户、最多 100 个发票 ID、目标状态。
-- Produces: `updateInvoiceStatus(input): Promise<{ updatedIds: string[] }>`；`invoice_status_events` 审计记录。
+- Produces: `ReimbursementStatus = "pending" | "reimbursing" | "reimbursed"`
+- Produces: `changeInvoiceStatuses(input: { ids: string[]; to: ReimbursementStatus }): Promise<StatusChangeResult>`
+- Produces: `PATCH /api/invoices/status` body `{ ids: string[]; to: ReimbursementStatus }`
 
-- [ ] **Step 1: 写原子批量更新测试**
+- [ ] **Step 1: Write failing atomic status-history test**
 
 ```ts
-test("rejects the whole batch when one invoice is not owned", async () => {
-  const mine = await seedInvoice({ userId: "u1", status: "pending" });
-  const theirs = await seedInvoice({ userId: "u2", status: "pending" });
-  await expect(updateInvoiceStatus({ userId: "u1", invoiceIds: [mine.id, theirs.id], status: "in_progress" })).rejects.toMatchObject({ code: "INVOICE_NOT_FOUND" });
-  expect(await getStatus(mine.id)).toBe("pending");
+it("changes a batch and records every transition in one transaction", async () => {
+  const result = await changeInvoiceStatuses({ ids: ["a", "b"], to: "reimbursed" });
+  expect(result).toEqual({ changed: 2, unchanged: 0 });
+  expect(await statusEvents()).toMatchObject([
+    { invoiceId: "a", fromStatus: "pending", toStatus: "reimbursed" },
+    { invoiceId: "b", fromStatus: "reimbursing", toStatus: "reimbursed" }
+  ]);
 });
 ```
 
-- [ ] **Step 2: 运行测试验证失败**
+- [ ] **Step 2: Run status tests and verify failure**
 
-Run: `DATABASE_URL=$DATABASE_URL_TEST pnpm test -- src/invoices/update-status.test.ts`
+Run: `pnpm vitest run tests/lib/invoices/status-service.test.ts tests/app/api/invoice-status.test.ts`
 
-Expected: FAIL，服务不存在。
+Expected: FAIL because the service and route are missing.
 
-- [ ] **Step 3: 实现事务和事件表**
+- [ ] **Step 3: Implement validated batch mutation**
 
-```ts
-const updateStatusInput = z.object({
-  invoiceIds: z.array(z.string().uuid()).min(1).max(100),
-  status: z.enum(invoiceStatuses),
-});
-```
+Allow 1–200 unique IDs. Read current rows, insert events only for changed rows, and update them in one SQLite transaction. Missing IDs abort the entire batch with `INVOICE_NOT_FOUND`; direct transitions and corrective rollbacks are both allowed.
 
-Inside one transaction, select all requested IDs with `userId`, require exact count, update status and `updatedAt`, then insert one event per changed invoice with `fromStatus`, `toStatus`, `changedBy`, and timestamp. IDs already in the target state are returned but do not create duplicate events.
+- [ ] **Step 4: Verify rollback and no-op behavior**
 
-- [ ] **Step 4: 生成 migration 并验证**
+Run: `pnpm vitest run tests/lib/invoices/status-service.test.ts tests/app/api/invoice-status.test.ts && pnpm typecheck`
 
-Run: `pnpm db:generate -- --name invoice_status_events && DATABASE_URL=$DATABASE_URL_TEST pnpm test -- src/invoices/update-status.test.ts`
+Expected: PASS; a missing ID leaves all selected invoices unchanged and same-status changes create no event.
 
-Expected: PASS。
-
-- [ ] **Step 5: 提交**
+- [ ] **Step 5: Commit and push status workflow**
 
 ```bash
-git add src/db/schema src/invoices/update-status.ts src/invoices/update-status.test.ts src/app/api/invoices/status drizzle
-git commit -m "feat: update reimbursement status in batches"
+git add src/lib/invoices/status-service.ts src/app/api/invoices/status tests/lib/invoices/status-service.test.ts tests/app/api/invoice-status.test.ts
+git commit -m "feat: manage invoice reimbursement statuses"
+git push origin HEAD
 ```
-
----
 
 ### Task 3: 统一统计查询
 
 **Files:**
-- Create: `src/dashboard/stats.ts`
-- Create: `src/dashboard/stats.test.ts`
+- Create: `src/lib/dashboard/types.ts`, `src/lib/dashboard/query.ts`
 - Create: `src/app/api/dashboard/route.ts`
+- Test: `tests/lib/dashboard/query.test.ts`, `tests/app/api/dashboard.test.ts`
 
 **Interfaces:**
-- Consumes: `invoiceWhere(userId, filters)`。
-- Produces: `getDashboardStats({ userId, range }): DashboardStats`。
+- Produces: `getDashboard(filters: InvoiceFilters): Promise<DashboardData>`
+- Produces: `DashboardData = { totals; byStatus; byMonth; byType }`
+- Produces: `GET /api/dashboard` using the exact `InvoiceFilters` parser
 
-- [ ] **Step 1: 写金额口径测试**
+- [ ] **Step 1: Write failing integer aggregation tests**
 
 ```ts
-test("uses exact decimal totals for cards and charts", async () => {
-  await seedInvoice({ userId: "u1", date: "2026-08-02", type: "vat_normal", status: "pending", total: "0.10" });
-  await seedInvoice({ userId: "u1", date: "2026-08-03", type: "vat_normal", status: "reimbursed", total: "0.20" });
-  const stats = await getDashboardStats({ userId: "u1", range: { month: "2026-08" } });
-  expect(stats.summary.totalAmount).toBe("0.30");
-  expect(stats.byType[0]).toMatchObject({ type: "vat_normal", amount: "0.30", count: 2 });
+it("returns totals whose status and type buckets reconcile", async () => {
+  await seedInvoices([
+    invoice({ totalAmountCents: 10001, status: "pending", type: "火车票" }),
+    invoice({ totalAmountCents: 20002, status: "reimbursed", type: "火车票" })
+  ]);
+  const data = await getDashboard({ month: "2026-08", types: [], statuses: [] });
+  expect(data.totals).toEqual({ amountCents: 30003, count: 2 });
+  expect(sumCents(data.byStatus)).toBe(30003);
+  expect(sumCents(data.byType)).toBe(30003);
 });
 ```
 
-- [ ] **Step 2: 运行测试验证失败**
+- [ ] **Step 2: Run dashboard tests and observe missing query failure**
 
-Run: `DATABASE_URL=$DATABASE_URL_TEST pnpm test -- src/dashboard/stats.test.ts`
+Run: `pnpm vitest run tests/lib/dashboard tests/app/api/dashboard.test.ts`
 
-Expected: FAIL，统计模块不存在。
+Expected: FAIL because dashboard modules are absent.
 
-- [ ] **Step 3: 实现聚合返回类型**
+- [ ] **Step 3: Implement shared WHERE clauses and zero buckets**
 
-```ts
-export type DashboardStats = {
-  summary: { totalAmount: string; totalCount: number; byStatus: Record<InvoiceStatus, { amount: string; count: number }> };
-  monthly: Array<{ month: string; pending: string; inProgress: string; reimbursed: string }>;
-  byType: Array<{ type: InvoiceType; amount: string; count: number }>;
-  byStatus: Array<{ status: InvoiceStatus; amount: string; count: number }>;
-};
-```
+Build the SQL predicate once from `InvoiceFilters` and reuse it for totals, status, month and type queries. Return all three status buckets even at zero. Keep `amountCents` as SQLite integers and calculate display percentages only in the UI with the rule `total === 0 ? 0 : value / total`.
 
-Use PostgreSQL `sum(numeric)` and return strings. Fill absent status keys and missing months with zero values so charts do not invent gaps. Default month uses Asia/Shanghai calendar boundaries calculated server-side.
+- [ ] **Step 4: Verify statistics against list results**
 
-- [ ] **Step 4: 验证**
+Run: `pnpm vitest run tests/lib/dashboard tests/app/api/dashboard.test.ts && pnpm typecheck`
 
-Run: `DATABASE_URL=$DATABASE_URL_TEST pnpm test -- src/dashboard/stats.test.ts && pnpm typecheck`
+Expected: PASS; property tests show the filtered list sum equals dashboard total for each fixture dataset.
 
-Expected: PASS；summary、byType、byStatus totals are equal for the same filter.
-
-- [ ] **Step 5: 提交**
+- [ ] **Step 5: Commit and push dashboard queries**
 
 ```bash
-git add src/dashboard src/app/api/dashboard
-git commit -m "feat: aggregate invoice dashboard statistics"
+git add src/lib/dashboard src/app/api/dashboard tests/lib/dashboard tests/app/api/dashboard.test.ts
+git commit -m "feat: add consistent invoice dashboard metrics"
+git push origin HEAD
 ```
 
----
-
-### Task 4: 发票管理列表与批量状态 UI
+### Task 4: 发票管理页面与批量操作
 
 **Files:**
-- Create: `src/app/(workbench)/invoices/page.tsx`
-- Create: `src/components/invoices/invoice-filters.tsx`
-- Create: `src/components/invoices/invoice-table.tsx`
-- Create: `src/components/invoices/invoice-table.test.tsx`
-- Create: `src/components/invoices/status-menu.tsx`
-- Create: `src/components/invoices/pagination.tsx`
+- Create: `src/app/invoices/page.tsx`, `src/app/invoices/[id]/page.tsx`
+- Create: `src/components/invoices/filter-bar.tsx`, `src/components/invoices/invoice-table.tsx`
+- Create: `src/components/invoices/bulk-status-bar.tsx`, `src/components/invoices/invoice-detail.tsx`
+- Create: `src/lib/client/invoice-api.ts`
+- Test: `tests/components/invoices/filter-bar.test.tsx`, `tests/components/invoices/invoice-table.test.tsx`
+- Test: `tests/e2e/invoice-management.spec.ts`
 
 **Interfaces:**
-- Consumes: URL filters、`listInvoices`、status API。
-- Produces: 可搜索、筛选、分页、选择和批量改状态的 `/invoices` 页面。
+- Consumes: invoice query, file preview, detail, and status APIs
+- Produces: URL-backed filters and selected-ID batch status actions
+- Produces: `pnpm test:e2e --grep @management`
 
-- [ ] **Step 1: 写选择与批量操作测试**
+- [ ] **Step 1: Write failing component tests**
 
 ```tsx
-test("updates only selected invoices", async () => {
-  const update = vi.fn().mockResolvedValue({ updatedIds: ["i1"] });
-  render(<InvoiceTable items={[invoice("i1"), invoice("i2")]} updateStatus={update} />);
-  await userEvent.click(screen.getByLabelText("选择发票 i1"));
-  await userEvent.click(screen.getByRole("button", { name: "标记为报销中" }));
-  expect(update).toHaveBeenCalledWith(["i1"], "in_progress");
+it("keeps filters in the URL and clears selection after a batch update", async () => {
+  render(<InvoiceManagement initialData={data} />);
+  await user.selectOptions(screen.getByLabelText("报销状态"), "待报销");
+  expect(mockRouter.replace).toHaveBeenCalledWith(expect.stringContaining("status=pending"));
+  await selectRows(["a", "b"]);
+  await user.click(screen.getByRole("button", { name: "标记为已报销" }));
+  expect(screen.getByText("已选择 0 张")).toBeVisible();
 });
 ```
 
-- [ ] **Step 2: 运行测试验证失败**
+- [ ] **Step 2: Run management component tests**
 
-Run: `pnpm test -- src/components/invoices/invoice-table.test.tsx`
+Run: `pnpm vitest run tests/components/invoices`
 
-Expected: FAIL，列表组件不存在。
+Expected: FAIL because the management components are absent.
 
-- [ ] **Step 3: 实现列表**
+- [ ] **Step 3: Implement responsive list, detail and status feedback**
 
-Filters write `month|year|type|status|q|page` to the URL and reset page to 1 when filter values change. Table columns are type, invoice number, seller, date, total amount, status and actions. Keep selection scoped to the current page, show selected count, require confirmation for batch actions, and announce completion through `aria-live="polite"`.
+Desktop uses a selectable table; narrow screens use cards with the same fields/actions. Debounce keyword changes by 250 ms, reset the cursor on any filter change, preserve filters in query parameters, and announce mutation success/failure through an `aria-live` region. Open the original through the protected inline file route.
 
-```tsx
-async function applyStatus(status: InvoiceStatus) {
-  const invoiceIds = [...selectedIds];
-  if (invoiceIds.length === 0) return;
-  await updateStatus(invoiceIds, status);
-  setSelectedIds(new Set());
-  setAnnouncement(`已更新 ${invoiceIds.length} 张发票`);
-  router.refresh();
-}
+- [ ] **Step 4: Add and run management journey**
+
+```ts
+test("@management filters and updates selected invoices", async ({ page }) => {
+  await page.goto("/invoices?month=2026-08");
+  await page.getByRole("checkbox", { name: /选择发票/ }).first().check();
+  await page.getByRole("button", { name: "标记为报销中" }).click();
+  await expect(page.getByText("已更新 1 张发票")).toBeVisible();
+});
 ```
 
-- [ ] **Step 4: 验证**
+Run: `pnpm vitest run tests/components/invoices && pnpm test:e2e --grep @management`
 
-Run: `pnpm test -- src/components/invoices && pnpm lint && pnpm typecheck`
+Expected: PASS at desktop and 390px viewports.
 
-Expected: PASS；键盘可以使用筛选器、复选框和状态菜单。
-
-- [ ] **Step 5: 提交**
+- [ ] **Step 5: Commit and push management UI**
 
 ```bash
-git add src/app/'(workbench)'/invoices src/components/invoices
-git commit -m "feat: add invoice management table"
+git add src/app/invoices src/components/invoices src/lib/client/invoice-api.ts tests/components/invoices tests/e2e/invoice-management.spec.ts
+git commit -m "feat: add responsive invoice management"
+git push origin HEAD
 ```
-
----
 
 ### Task 5: 总览指标与可访问图表
 
 **Files:**
-- Modify: `package.json`
-- Modify: `src/app/(workbench)/dashboard/page.tsx`
-- Create: `src/components/dashboard/summary-cards.tsx`
-- Create: `src/components/dashboard/monthly-chart.tsx`
-- Create: `src/components/dashboard/type-chart.tsx`
-- Create: `src/components/dashboard/status-chart.tsx`
-- Create: `src/components/dashboard/dashboard.test.tsx`
-- Create: `src/components/dashboard/dashboard.module.css`
+- Modify: `src/app/page.tsx`
+- Create: `src/components/dashboard/summary-cards.tsx`, `src/components/dashboard/dashboard-filters.tsx`
+- Create: `src/components/charts/monthly-stacked-bar.tsx`, `src/components/charts/type-donut.tsx`, `src/components/charts/status-donut.tsx`
+- Create: `src/components/charts/accessible-legend.tsx`
+- Test: `tests/components/dashboard/dashboard.test.tsx`, `tests/components/charts/accessible-legend.test.tsx`
+- Test: `tests/e2e/dashboard.spec.ts`
 
 **Interfaces:**
-- Consumes: `DashboardStats`。
-- Produces: 顶部指标、月度堆叠柱状图、类型饼图、状态饼图；点击后导航到筛选后的 `/invoices`。
+- Consumes: `DashboardData` and common filter query parameters
+- Produces: chart segment links to `/invoices` with matching month/type/status filters
+- Produces: `pnpm test:e2e --grep @dashboard`
 
-- [ ] **Step 1: 写文字备选与联动测试**
+- [ ] **Step 1: Write failing accessibility and reconciliation tests**
 
 ```tsx
-test("renders chart values as text and links a type to the invoice list", () => {
-  render(<TypeChart data={[{ type: "railway", amount: "553.00", count: 1 }]} mode="amount" />);
-  expect(screen.getByText("铁路电子客票 100% · ¥553.00")).toBeVisible();
-  expect(screen.getByRole("link", { name: /铁路电子客票/ })).toHaveAttribute("href", expect.stringContaining("type=railway"));
+it("shows amount, count and percentage as text for every type", () => {
+  render(<TypeDonut items={[{ type: "火车票", amountCents: 2500, count: 2 }]} totalCents={10000} />);
+  expect(screen.getByText("火车票")).toBeVisible();
+  expect(screen.getByText("¥25.00")).toBeVisible();
+  expect(screen.getByText("2 张 · 25.0%")).toBeVisible();
 });
 ```
 
-- [ ] **Step 2: 运行测试验证失败**
+- [ ] **Step 2: Run chart tests and verify failure**
 
-Run: `pnpm test -- src/components/dashboard/dashboard.test.tsx`
+Run: `pnpm vitest run tests/components/dashboard tests/components/charts`
 
-Expected: FAIL，图表不存在。
+Expected: FAIL because dashboard components are missing.
 
-- [ ] **Step 3: 安装 Recharts 并实现**
+- [ ] **Step 3: Implement summaries, charts and text equivalents**
 
-Run: `pnpm add recharts`
+Render cards for total and all three statuses. The monthly chart stacks status cents; type/status donuts use a stable palette and always render an adjacent semantic list. Every segment and legend row is keyboard reachable and links to the corresponding filtered invoice list. Empty data shows `当前范围暂无发票` instead of a zero-radius chart.
 
-Use `ResponsiveContainer`; stacked bars use the three status series, pie slices use type/status. Provide an adjacent semantic list containing label, amount, count and percentage. Type chart offers `按金额` and `按数量`; this is presentation-only and must not trigger a second API request. Use the accepted prototype colors and collapse the dashboard to one column at 760px.
+- [ ] **Step 4: Run dashboard component and journey tests**
 
-```tsx
-<ResponsiveContainer width="100%" height={240}>
-  <BarChart data={data} accessibilityLayer>
-    <XAxis dataKey="month" /><YAxis />
-    <Bar dataKey="pending" stackId="status" name="待报销" fill="#3869eb" />
-    <Bar dataKey="inProgress" stackId="status" name="报销中" fill="#6f91f1" />
-    <Bar dataKey="reimbursed" stackId="status" name="已报销" fill="#9fb4ef" />
-  </BarChart>
-</ResponsiveContainer>
+```ts
+test("@dashboard chart navigation opens matching details", async ({ page }) => {
+  await page.goto("/?month=2026-08");
+  await page.getByRole("link", { name: /火车票.*25\.0%/ }).click();
+  await expect(page).toHaveURL(/\/invoices\?.*type=/);
+});
 ```
 
-- [ ] **Step 4: 验证**
+Run: `pnpm vitest run tests/components/dashboard tests/components/charts && pnpm test:e2e --grep @dashboard`
 
-Run: `pnpm test -- src/components/dashboard && pnpm typecheck && pnpm build`
+Expected: PASS with both visual charts and complete textual equivalents.
 
-Expected: PASS；zero-data state says `当前范围暂无发票` and renders no misleading 0% pie.
-
-- [ ] **Step 5: 提交**
+- [ ] **Step 5: Commit and push the dashboard**
 
 ```bash
-git add package.json pnpm-lock.yaml src/app/'(workbench)'/dashboard src/components/dashboard
-git commit -m "feat: add responsive invoice dashboard"
+git add src/app/page.tsx src/components/dashboard src/components/charts tests/components/dashboard tests/components/charts tests/e2e/dashboard.spec.ts package.json pnpm-lock.yaml
+git commit -m "feat: add accessible invoice dashboard"
+git push origin HEAD
 ```
 
----
-
-### Task 6: 安全删除与管理阶段端到端验收
+### Task 6: 可恢复删除与启动收敛
 
 **Files:**
-- Modify: `src/db/schema/invoices.ts`
-- Create: `drizzle/0003_deletion_recoveries.sql` (generated)
-- Create: `src/invoices/delete-invoice.ts`
-- Create: `src/invoices/delete-invoice.test.ts`
-- Create: `src/app/api/invoices/[invoiceId]/route.ts`
-- Create: `src/components/invoices/delete-invoice-dialog.tsx`
-- Create: `e2e/management-dashboard.spec.ts`
+- Create: `src/lib/deletion/types.ts`, `src/lib/deletion/trash.ts`, `src/lib/deletion/service.ts`, `src/lib/deletion/recover.ts`
+- Create: `src/app/api/invoices/[id]/delete/route.ts`
+- Create: `src/components/invoices/delete-dialog.tsx`
+- Test: `tests/lib/deletion/service.test.ts`, `tests/lib/deletion/recover.test.ts`
+- Test: `tests/e2e/invoice-deletion.spec.ts`
+- Modify: `src/lib/runtime/context.ts`
 
 **Interfaces:**
-- Consumes: 当前用户、invoice ID、ObjectStore。
-- Produces: `deleteInvoice({ userId, invoiceId })`；仅在数据库与对象删除均完成后返回成功。
+- Produces: `deleteInvoice(id: string): Promise<{ status: "deleted" | "incomplete" }>`
+- Produces: `recoverPendingDeletions(): Promise<RecoverySummary>`
+- Produces: `moveToTrash(path: string): Promise<string>` returning the recoverable Trash path/receipt
+- Produces: `DELETE /api/invoices/:id/delete`
 
-- [ ] **Step 1: 写部分失败测试**
+- [ ] **Step 1: Write failing operation-order tests**
 
 ```ts
-test("does not report success when object deletion fails", async () => {
-  const invoice = await seedInvoice({ userId: "u1" });
-  objectStore.delete.mockRejectedValue(new Error("storage unavailable"));
-  await expect(deleteInvoice({ userId: "u1", invoiceId: invoice.id })).rejects.toMatchObject({ code: "DELETE_INCOMPLETE" });
-  expect(await findInvoice(invoice.id)).not.toBeNull();
+it("records recovery, moves the managed copy, then commits row deletion", async () => {
+  await deleteInvoice("invoice-a");
+  expect(events).toEqual(["recovery-created", "file-trashed", "db-transaction-committed"]);
+  expect(sourceOriginalExists()).toBe(true);
+});
+
+it("retains recovery evidence when the database transaction fails", async () => {
+  db.failNextTransaction();
+  await expect(deleteInvoice("invoice-a")).resolves.toEqual({ status: "incomplete" });
+  expect(await recoveryRecord("invoice-a")).toMatchObject({ stage: "file_trashed" });
 });
 ```
 
-- [ ] **Step 2: 运行测试验证失败**
+- [ ] **Step 2: Run deletion tests and observe failure**
 
-Run: `DATABASE_URL=$DATABASE_URL_TEST pnpm test -- src/invoices/delete-invoice.test.ts`
+Run: `pnpm vitest run tests/lib/deletion`
 
-Expected: FAIL，删除服务不存在。
+Expected: FAIL because deletion modules do not exist.
 
-- [ ] **Step 3: 实现删除协调**
+- [ ] **Step 3: Implement Trash move and recovery state machine**
 
-Add `deletion_recoveries(id, user_id, invoice_id, storage_key, state, last_error, created_at, updated_at)` with states `pending|object_deleted|failed`. Verify ownership, insert a pending recovery row, delete the object, mark `object_deleted`, then delete invoice rows and recovery row in one database transaction. If object deletion fails, keep the invoice and mark recovery failed. If database deletion fails after object deletion, retain `object_deleted` so the retry path removes remaining metadata. Return `DELETE_INCOMPLETE` until both sides finish. The UI requires explicit confirmation with seller, date and amount, and displays success only after a 204 response.
+Use a native macOS operation (`NSWorkspace.recycle`) through the Swift helper so the result is recoverable. State transitions are `prepared → file_trashed → completed|needs_attention`. Only after `file_trashed` delete invoice, draft, jobs, duplicate links and source row in one transaction. Startup retries database finalization; if the file move never happened it may safely cancel the recovery record.
 
-```ts
-export async function deleteInvoice({ userId, invoiceId }: { userId: string; invoiceId: string }) {
-  const invoice = await requireOwnedInvoice(userId, invoiceId);
-  const recovery = await createDeletionRecovery(invoice);
-  try { await objectStore.delete(invoice.storageKey); }
-  catch (error) { await failDeletionRecovery(recovery.id, safeErrorCode(error)); throw appError("DELETE_INCOMPLETE"); }
-  await markObjectDeleted(recovery.id);
-  await deleteInvoiceMetadataAndRecovery({ userId, invoiceId, recoveryId: recovery.id });
-}
-```
-
-Run: `pnpm db:generate -- --name deletion_recoveries`
-
-- [ ] **Step 4: 运行跨浏览器与移动端验收**
+- [ ] **Step 4: Add UI confirmation and run deletion journey**
 
 ```ts
-test("filters, updates and deletes an invoice", async ({ page }) => {
-  await loginAsTestUser(page);
-  await page.goto("/invoices?month=2026-08");
-  await page.getByLabel("选择发票 i1").check();
-  await page.getByRole("button", { name: "标记为已报销" }).click();
-  await expect(page.getByText("已报销")).toBeVisible();
-  await page.getByRole("button", { name: "删除发票 i1" }).click();
-  await page.getByRole("button", { name: "确认永久删除" }).click();
-  await expect(page.getByText("发票已删除")).toBeVisible();
+test("@management deletes only after naming the consequence", async ({ page }) => {
+  await page.goto(`/invoices/${invoiceId}`);
+  await page.getByRole("button", { name: "删除发票" }).click();
+  await expect(page.getByText("原位置文件不会删除，工作台副本将移入废纸篓")).toBeVisible();
+  await page.getByRole("button", { name: "移入废纸篓" }).click();
+  await expect(page.getByText("已移入废纸篓")).toBeVisible();
 });
 ```
 
-Run: `pnpm playwright test e2e/management-dashboard.spec.ts --project=chromium --project=webkit`
+Run: `pnpm vitest run tests/lib/deletion && pnpm test:e2e --grep @management && pnpm verify`
 
-Expected: desktop and mobile projects PASS。
+Expected: PASS; fixture source file remains and managed copy is absent from the work root.
 
-- [ ] **Step 5: 全量验证并提交**
-
-Run: `pnpm lint && pnpm typecheck && pnpm test && pnpm playwright test e2e/management-dashboard.spec.ts && pnpm build`
+- [ ] **Step 5: Commit and push deletion recovery**
 
 ```bash
-git add src e2e drizzle package.json pnpm-lock.yaml
-git commit -m "feat: complete invoice management dashboard"
+git add src/lib/deletion src/app/api/invoices src/components/invoices/delete-dialog.tsx src/lib/runtime/context.ts tests/lib/deletion tests/e2e/invoice-deletion.spec.ts native/InvoiceNative
+git commit -m "feat: add recoverable invoice deletion"
+git push origin HEAD
 ```

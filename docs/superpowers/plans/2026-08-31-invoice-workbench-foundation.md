@@ -1,88 +1,104 @@
-# 发票工作台基础设施 Implementation Plan
+# 本地发票工作台基础设施 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 交付可登录、受保护、可连接 PostgreSQL 与对象存储的响应式空工作台，为识别、统计和导出阶段提供稳定边界。
+**Goal:** 建立可双击启动、仅监听本机、使用 SQLite 和本地文件目录的发票工作台骨架。
 
-**Architecture:** 使用 Next.js 16 App Router 作为同仓 Web 与 API 应用；PostgreSQL 保存认证和业务数据，Drizzle 管理 schema 与 migration。Better Auth 提供邮箱密码会话，对象存储通过 `ObjectStore` 接口隔离生产 S3 与测试内存实现。
+**Architecture:** 单个 Next.js 进程同时提供响应式网页、Route Handler API 和进程内任务队列。启动器把运行配置保存在 macOS Application Support，把业务数据库与文件保存在用户工作目录；所有高风险 API 使用每次启动生成的令牌。
 
-**Tech Stack:** Node.js 24、pnpm 9、Next.js 16、React 19.2、TypeScript 5、PostgreSQL 16、Drizzle ORM、Better Auth、AWS SDK v3、Zod、Vitest、Testing Library
+**Tech Stack:** Node.js 24、pnpm 9.15、Next.js 16、React 19、TypeScript 5、SQLite/better-sqlite3、Drizzle ORM、Zod、Vitest、Testing Library、Playwright
 
 **Spec:** `docs/product-design.md`
 
 ## Global Constraints
 
-- Node.js 必须满足 `>=22.12 <27`；pnpm 固定为 `9.15.9`。
-- 页面使用中文，桌面端与手机端都必须可完成核心操作。
-- 密钥、数据库地址和存储凭证只能来自环境变量，不得提交真实值。
-- 金额在数据库中使用 `numeric(14,2)`，应用边界使用十进制字符串。
-- 用户所有权校验放在服务端，不接受客户端传入的用户 ID 作为授权依据。
-- 每个行为变更先写失败测试，再写最小实现。
+- 首版只支持单台 Mac、单个个人用户，不实现登录、远程访问、云同步或多人协作。
+- 本地服务只绑定 `127.0.0.1`；默认端口 `4876`，冲突时只尝试 `4877—4885`。
+- 默认工作目录为 `~/Documents/发票工作台/`；引导配置位于 `~/Library/Application Support/发票工作台/`。
+- SQLite 开启 WAL、外键和 busy timeout；金额一律使用整数分。
+- 日志不得包含 OCR 原文、发票图片、绝对来源路径、启动令牌或密钥，并自动保留 7 天。
+- 禁止分析、遥测和自动更新网络请求。
+- 每个 Task 完成并通过验证后必须独立 `git commit`，随后 `git push origin HEAD`。
 
 ---
 
-### Task 1: 初始化可测试的 Next.js 应用
+## File Structure
+
+```text
+package.json                         # 依赖、构建与验证命令
+next.config.ts                       # standalone 构建和安全响应头
+src/app/                             # 页面、布局与本地 API
+src/components/app-shell.tsx         # 响应式桌面/窄屏导航
+src/lib/bootstrap/paths.ts            # macOS 引导目录与工作目录解析
+src/lib/bootstrap/config.ts           # config.json/runtime.json 原子读写
+src/lib/db/client.ts                  # SQLite 连接、pragma 与迁移入口
+src/lib/db/schema.ts                  # Drizzle 表结构
+src/lib/db/migrations.ts              # 版本化 SQL 迁移
+src/lib/jobs/queue.ts                 # 并发 2 的可恢复进程内队列
+src/lib/security/request-token.ts     # Origin 与启动令牌校验
+src/lib/logging/logger.ts             # 结构化脱敏日志
+scripts/install.mjs                   # 首次安装流程
+scripts/start.mjs                     # 端口选择、服务启动与浏览器打开
+scripts/stop.mjs                      # 正常关闭当前实例
+首次安装.command                       # Finder 双击入口
+启动发票工作台.command                 # Finder 双击入口
+关闭发票工作台.command                 # Finder 双击入口
+tests/                               # Vitest 与 Playwright 验收测试
+```
+
+## Shared Interfaces
+
+```ts
+export type BootstrapConfig = { version: 1; workRoot: string; lastPort: number };
+export type RuntimeInfo = { pid: number; port: number; token: string; startedAt: string };
+export type WorkPaths = { root: string; data: string; invoices: string; exports: string; backups: string; logs: string };
+export type LocalDatabase = { sqlite: import("better-sqlite3").Database; close(): void };
+export type JobKind = "recognition" | "export" | "maintenance";
+export type NewJob = { kind: JobKind; payload: Record<string, unknown> };
+export interface LocalJobQueue { enqueue(input: NewJob): Promise<string>; start(): void; stop(): Promise<void>; recover(): Promise<void> }
+export type RuntimeContext = { config: BootstrapConfig; runtime: RuntimeInfo; paths: WorkPaths; db: LocalDatabase; queue: LocalJobQueue };
+export type LocalLogEvent = { event: string; internalId?: string; stage?: string; errorCode?: string; timestamp?: string };
+export interface LocalLogger { info(event: LocalLogEvent): void; warn(event: LocalLogEvent): void; error(event: LocalLogEvent): void }
+```
+
+### Task 1: 初始化可测试的本地 Next.js 应用
 
 **Files:**
-- Create: `package.json`
-- Create: `pnpm-workspace.yaml`
-- Create: `.nvmrc`
-- Create: `.gitignore`
-- Create: `next.config.ts`
-- Create: `tsconfig.json`
-- Create: `eslint.config.mjs`
-- Create: `vitest.config.ts`
-- Create: `src/app/layout.tsx`
-- Create: `src/app/page.tsx`
-- Create: `src/app/globals.css`
-- Create: `src/app/page.test.tsx`
+- Create: `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `.nvmrc`
+- Create: `next.config.ts`, `tsconfig.json`, `eslint.config.mjs`, `vitest.config.ts`, `playwright.config.ts`
+- Create: `src/app/layout.tsx`, `src/app/page.tsx`, `src/app/globals.css`
+- Create: `src/components/app-shell.tsx`
+- Test: `tests/components/app-shell.test.tsx`
+- Modify: `.gitignore`
 
 **Interfaces:**
-- Consumes: 无。
-- Produces: `pnpm dev`、`pnpm build`、`pnpm lint`、`pnpm typecheck`、`pnpm test`；别名 `@/* -> src/*`。
+- Produces: `AppShell({ children, activePath }: { children: ReactNode; activePath: string }): JSX.Element`
+- Produces: scripts `dev`, `build`, `start`, `lint`, `typecheck`, `test`, `test:e2e`, `verify`
 
-- [ ] **Step 1: 写应用入口失败测试**
+- [ ] **Step 1: Write the failing shell test**
 
 ```tsx
-// src/app/page.test.tsx
 import { render, screen } from "@testing-library/react";
-import HomePage from "./page";
+import { AppShell } from "@/components/app-shell";
 
-test("shows the product name", () => {
-  render(<HomePage />);
-  expect(screen.getByRole("heading", { name: "发票工作台" })).toBeInTheDocument();
+it("renders the four local workbench destinations", () => {
+  render(<AppShell activePath="/"><div>内容</div></AppShell>);
+  for (const name of ["总览", "上传发票", "发票管理", "整理导出"]) {
+    expect(screen.getAllByRole("link", { name })[0]).toBeInTheDocument();
+  }
+  expect(screen.getByText("仅保存在这台 Mac")).toBeInTheDocument();
 });
 ```
 
-- [ ] **Step 2: 创建测试配置并验证测试失败**
+- [ ] **Step 2: Run the focused test and capture the expected failure**
 
-```ts
-// vitest.config.ts
-import { defineConfig } from "vitest/config";
-import react from "@vitejs/plugin-react";
-import path from "node:path";
+Run: `pnpm vitest run tests/components/app-shell.test.tsx`
 
-export default defineConfig({
-  plugins: [react()],
-  resolve: { alias: { "@": path.resolve(__dirname, "src") } },
-  test: {
-    environment: "jsdom",
-    globals: true,
-    setupFiles: ["./src/test/setup.ts"],
-  },
-});
-```
+Expected: FAIL because `@/components/app-shell` does not exist.
 
-```ts
-// src/test/setup.ts
-import "@testing-library/jest-dom/vitest";
-```
+- [ ] **Step 3: Create the pinned toolchain and minimal shell**
 
-Run: `pnpm test -- src/app/page.test.tsx`
-
-Expected: FAIL，因为 `src/app/page.tsx` 尚不存在。
-
-- [ ] **Step 3: 创建最小应用与依赖清单**
+Use exact runtime floors and script names in `package.json`:
 
 ```json
 {
@@ -91,627 +107,359 @@ Expected: FAIL，因为 `src/app/page.tsx` 尚不存在。
   "packageManager": "pnpm@9.15.9",
   "engines": { "node": ">=22.12 <27" },
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -H 127.0.0.1",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -H 127.0.0.1",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate"
-  },
-  "dependencies": {
-    "@aws-sdk/client-s3": "latest",
-    "@aws-sdk/s3-request-presigner": "latest",
-    "better-auth": "latest",
-    "drizzle-orm": "latest",
-    "next": "^16.0.0",
-    "pg": "latest",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "zod": "latest"
-  },
-  "devDependencies": {
-    "@testing-library/jest-dom": "latest",
-    "@testing-library/react": "latest",
-    "@types/node": "latest",
-    "@types/pg": "latest",
-    "@types/react": "latest",
-    "@types/react-dom": "latest",
-    "@vitejs/plugin-react": "latest",
-    "drizzle-kit": "latest",
-    "eslint": "latest",
-    "eslint-config-next": "^16.0.0",
-    "jsdom": "latest",
-    "typescript": "^5.1.0",
-    "vitest": "latest"
+    "test:e2e": "playwright test",
+    "verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   }
 }
 ```
 
-```tsx
-// src/app/page.tsx
-export default function HomePage() {
-  return <main><h1>发票工作台</h1><p>上传、识别、管理并导出个人发票。</p></main>;
-}
-```
+Implement the four routes `/`, `/upload`, `/invoices`, `/exports`; use an aside above 760px and a bottom nav at or below 760px. Set `output: "standalone"` and `poweredByHeader: false`.
 
-```tsx
-// src/app/layout.tsx
-import "./globals.css";
+- [ ] **Step 4: Install and run the fast verification set**
 
-export const metadata = { title: "发票工作台", description: "个人发票整理工具" };
+Run: `pnpm install --frozen-lockfile=false && pnpm lint && pnpm typecheck && pnpm vitest run tests/components/app-shell.test.tsx && pnpm build`
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="zh-CN"><body>{children}</body></html>;
-}
-```
+Expected: all commands exit 0 and `.next/` is produced.
 
-```yaml
-# pnpm-workspace.yaml
-packages:
-  - "."
-```
-
-```text
-# .nvmrc
-24
-```
-
-```ts
-// next.config.ts
-import type { NextConfig } from "next";
-const nextConfig: NextConfig = { output: "standalone" };
-export default nextConfig;
-```
-
-```json
-// tsconfig.json
-{
-  "compilerOptions": {
-    "target": "ES2022",
-    "lib": ["dom", "dom.iterable", "esnext"],
-    "allowJs": false,
-    "skipLibCheck": true,
-    "strict": true,
-    "noEmit": true,
-    "esModuleInterop": true,
-    "module": "esnext",
-    "moduleResolution": "bundler",
-    "resolveJsonModule": true,
-    "isolatedModules": true,
-    "jsx": "react-jsx",
-    "incremental": true,
-    "plugins": [{ "name": "next" }],
-    "types": ["vitest/globals", "node"],
-    "paths": { "@/*": ["./src/*"] }
-  },
-  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules"]
-}
-```
-
-```js
-// eslint.config.mjs
-import { defineConfig, globalIgnores } from "eslint/config";
-import nextVitals from "eslint-config-next/core-web-vitals";
-import nextTs from "eslint-config-next/typescript";
-export default defineConfig([...nextVitals, ...nextTs, globalIgnores([".next/**", "coverage/**"])]);
-```
-
-```text
-# .gitignore
-node_modules/
-.next/
-coverage/
-test-results/
-playwright-report/
-.env*
-!.env.example
-*.log
-```
-
-```css
-/* src/app/globals.css */
-* { box-sizing: border-box; }
-html { color-scheme: light dark; }
-body { margin: 0; font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; background: light-dark(#f6f8fc, #0e1421); color: light-dark(#172033, #ecf2ff); }
-:focus-visible { outline: 3px solid #3769ee; outline-offset: 2px; }
-```
-
-Do not copy the prototype's fixed demo height into production pages.
-
-Run: `pnpm install`
-
-- [ ] **Step 4: 运行基础质量检查**
-
-Run: `pnpm test -- src/app/page.test.tsx && pnpm lint && pnpm typecheck && pnpm build`
-
-Expected: 全部 PASS，生产构建生成成功。
-
-- [ ] **Step 5: 提交**
+- [ ] **Step 5: Commit and push the application shell**
 
 ```bash
-git add package.json pnpm-lock.yaml pnpm-workspace.yaml .nvmrc .gitignore next.config.ts tsconfig.json eslint.config.mjs vitest.config.ts src
-git commit -m "chore: scaffold invoice workbench"
+git add .gitignore .nvmrc package.json pnpm-lock.yaml pnpm-workspace.yaml next.config.ts tsconfig.json eslint.config.mjs vitest.config.ts playwright.config.ts src tests/components/app-shell.test.tsx
+git commit -m "feat: initialize local invoice workbench"
+git push origin HEAD
 ```
 
----
-
-### Task 2: 环境变量与启动校验
+### Task 2: 引导配置与安全工作目录
 
 **Files:**
-- Create: `.env.example`
-- Create: `src/config/env.ts`
-- Create: `src/config/env.test.ts`
+- Create: `src/lib/bootstrap/types.ts`, `src/lib/bootstrap/paths.ts`, `src/lib/bootstrap/config.ts`
+- Create: `src/lib/fs/atomic-write.ts`
+- Create: `src/lib/logging/logger.ts`
+- Test: `tests/lib/bootstrap/config.test.ts`, `tests/lib/bootstrap/paths.test.ts`, `tests/lib/logging/logger.test.ts`
 
 **Interfaces:**
-- Consumes: `process.env`。
-- Produces: `getServerEnv(input?: NodeJS.ProcessEnv): ServerEnv`，包含 `DATABASE_URL`、`BETTER_AUTH_SECRET`、`BETTER_AUTH_URL`、S3 与腾讯云配置。
+- Produces: `resolveBootstrapDir(home: string): string`
+- Produces: `resolveDefaultWorkRoot(home: string): string`
+- Produces: `assertInsideWorkRoot(workRoot: string, candidate: string): string`
+- Produces: `readBootstrapConfig(dir: string): Promise<BootstrapConfig | null>`
+- Produces: `writeBootstrapConfig(dir: string, value: BootstrapConfig): Promise<void>`
+- Produces: `ensureWorkRoot(root: string): Promise<WorkPaths>`
+- Produces: `createLogger(logDir: string): LocalLogger` accepting only `{ event, internalId?, stage?, errorCode? }`
 
-- [ ] **Step 1: 写环境解析失败测试**
+- [ ] **Step 1: Write failing path and config tests**
 
 ```ts
-import { describe, expect, test } from "vitest";
-import { getServerEnv } from "./env";
+it("uses Documents and rejects traversal", () => {
+  expect(resolveDefaultWorkRoot("/Users/test")).toBe("/Users/test/Documents/发票工作台");
+  expect(() => assertInsideWorkRoot("/tmp/work", "/tmp/work/../secret"))
+    .toThrow("PATH_OUTSIDE_WORK_ROOT");
+});
 
-describe("getServerEnv", () => {
-  test("rejects a short auth secret", () => {
-    expect(() => getServerEnv({ DATABASE_URL: "postgres://localhost/test", BETTER_AUTH_SECRET: "short", BETTER_AUTH_URL: "http://localhost:3000" })).toThrow(/BETTER_AUTH_SECRET/);
-  });
+it("round-trips a versioned config atomically", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "invoice-config-"));
+  const value = { version: 1 as const, workRoot: "/tmp/invoices", lastPort: 4876 };
+  await writeBootstrapConfig(dir, value);
+  await expect(readBootstrapConfig(dir)).resolves.toEqual(value);
+});
 
-  test("accepts disabled external services in tests", () => {
-    const env = getServerEnv({
-      NODE_ENV: "test",
-      DATABASE_URL: "postgres://localhost/test",
-      BETTER_AUTH_SECRET: "12345678901234567890123456789012",
-      BETTER_AUTH_URL: "http://localhost:3000",
-      OBJECT_STORE_DRIVER: "memory",
-      OCR_DRIVER: "fake"
-    });
-    expect(env.OBJECT_STORE_DRIVER).toBe("memory");
-  });
+it("rejects sensitive and unregistered log fields", async () => {
+  const logger = createLogger(logDir);
+  expect(() => logger.info({ event: "job_failed", ocrText: "票面内容" } as never))
+    .toThrow("UNSAFE_LOG_FIELD");
 });
 ```
 
-- [ ] **Step 2: 运行测试验证失败**
+- [ ] **Step 2: Verify the tests fail for missing modules**
 
-Run: `pnpm test -- src/config/env.test.ts`
+Run: `pnpm vitest run tests/lib/bootstrap`
 
-Expected: FAIL，模块不存在。
+Expected: FAIL with module resolution errors for `bootstrap/paths` and `bootstrap/config`.
 
-- [ ] **Step 3: 实现分支校验**
-
-```ts
-// src/config/env.ts
-import { z } from "zod";
-
-const schema = z.object({
-  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-  DATABASE_URL: z.string().url(),
-  BETTER_AUTH_SECRET: z.string().min(32),
-  BETTER_AUTH_URL: z.string().url(),
-  OBJECT_STORE_DRIVER: z.enum(["memory", "s3"]).default("memory"),
-  S3_ENDPOINT: z.string().url().optional(),
-  S3_REGION: z.string().optional(),
-  S3_BUCKET: z.string().optional(),
-  S3_ACCESS_KEY_ID: z.string().optional(),
-  S3_SECRET_ACCESS_KEY: z.string().optional(),
-  OCR_DRIVER: z.enum(["fake", "tencent"]).default("fake"),
-  TENCENT_SECRET_ID: z.string().optional(),
-  TENCENT_SECRET_KEY: z.string().optional()
-}).superRefine((value, ctx) => {
-  if (value.OBJECT_STORE_DRIVER === "s3") {
-    for (const key of ["S3_ENDPOINT", "S3_REGION", "S3_BUCKET", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"] as const) {
-      if (!value[key]) ctx.addIssue({ code: "custom", path: [key], message: `${key} is required for s3` });
-    }
-  }
-  if (value.OCR_DRIVER === "tencent") {
-    for (const key of ["TENCENT_SECRET_ID", "TENCENT_SECRET_KEY"] as const) {
-      if (!value[key]) ctx.addIssue({ code: "custom", path: [key], message: `${key} is required for tencent OCR` });
-    }
-  }
-});
-
-export type ServerEnv = z.infer<typeof schema>;
-export function getServerEnv(input: NodeJS.ProcessEnv = process.env): ServerEnv { return schema.parse(input); }
-```
-
-`.env.example` must list every key with empty or local-safe values and comments, never real credentials.
-
-- [ ] **Step 4: 验证**
-
-Run: `pnpm test -- src/config/env.test.ts && pnpm typecheck`
-
-Expected: PASS。
-
-- [ ] **Step 5: 提交**
-
-```bash
-git add .env.example src/config
-git commit -m "feat: validate server environment"
-```
-
----
-
-### Task 3: PostgreSQL、Drizzle 与认证表
-
-**Files:**
-- Create: `drizzle.config.ts`
-- Create: `src/db/client.ts`
-- Create: `src/db/schema/auth.ts`
-- Create: `src/db/schema/index.ts`
-- Create: `src/db/schema/auth.test.ts`
-- Create: `drizzle/0000_auth.sql` (generated)
-
-**Interfaces:**
-- Consumes: `getServerEnv().DATABASE_URL`。
-- Produces: `db`、`users`、`sessions`、`accounts`、`verifications`，供 Better Auth 和业务表外键使用。
-
-- [ ] **Step 1: 写 schema 约束测试**
+- [ ] **Step 3: Implement exact types, path containment, and atomic writes**
 
 ```ts
-import { getTableConfig } from "drizzle-orm/pg-core";
-import { accounts, sessions, users } from "./auth";
-
-test("auth schema has unique email, token and provider account", () => {
-  expect(getTableConfig(users).indexes.filter((index) => index.config.unique)).toHaveLength(1);
-  expect(getTableConfig(sessions).indexes.filter((index) => index.config.unique)).toHaveLength(1);
-  expect(getTableConfig(accounts).indexes.filter((index) => index.config.unique)).toHaveLength(1);
-});
-```
-
-- [ ] **Step 2: 运行测试验证失败**
-
-Run: `pnpm test -- src/db/schema/auth.test.ts`
-
-Expected: FAIL，认证表尚不存在。
-
-- [ ] **Step 3: 定义认证表与数据库客户端**
-
-```ts
-// src/db/schema/auth.ts
-import { boolean, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
-
-const timestamps = {
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+export type BootstrapConfig = { version: 1; workRoot: string; lastPort: number };
+export type RuntimeInfo = { pid: number; port: number; token: string; startedAt: string };
+export type WorkPaths = {
+  root: string; data: string; invoices: string; exports: string; backups: string; logs: string;
 };
-
-export const users = pgTable("user", {
-  id: text("id").primaryKey(), name: text("name").notNull(), email: text("email").notNull(),
-  emailVerified: boolean("email_verified").default(false).notNull(), image: text("image"), ...timestamps,
-}, (table) => [uniqueIndex("user_email_unique").on(table.email)]);
-
-export const sessions = pgTable("session", {
-  id: text("id").primaryKey(), expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-  token: text("token").notNull(), ipAddress: text("ip_address"), userAgent: text("user_agent"),
-  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }), ...timestamps,
-}, (table) => [uniqueIndex("session_token_unique").on(table.token)]);
-
-export const accounts = pgTable("account", {
-  id: text("id").primaryKey(), accountId: text("account_id").notNull(), providerId: text("provider_id").notNull(),
-  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  accessToken: text("access_token"), refreshToken: text("refresh_token"), idToken: text("id_token"),
-  accessTokenExpiresAt: timestamp("access_token_expires_at", { withTimezone: true }),
-  refreshTokenExpiresAt: timestamp("refresh_token_expires_at", { withTimezone: true }),
-  scope: text("scope"), password: text("password"), ...timestamps,
-}, (table) => [uniqueIndex("account_provider_unique").on(table.providerId, table.accountId)]);
-
-export const verifications = pgTable("verification", {
-  id: text("id").primaryKey(), identifier: text("identifier").notNull(), value: text("value").notNull(),
-  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(), ...timestamps,
-});
 ```
 
-`src/db/client.ts` must create a singleton `pg.Pool` in development and export `db = drizzle(pool, { schema })`. `drizzle.config.ts` must use dialect `postgresql`, schema `./src/db/schema/index.ts`, output `./drizzle`, and `DATABASE_URL` from the environment.
+Validate JSON with Zod, write to a sibling `.tmp`, `chmod(0o600)`, then rename atomically. Resolve existing parents with `realpath` and reject an absolute escape or a `path.relative` result beginning with `..`. The logger writes one JSON object per line and rejects every key except `event`, `internalId`, `stage`, `errorCode`, `timestamp`; it never accepts arbitrary messages or error stacks.
 
-- [ ] **Step 4: 生成 migration 并验证**
+- [ ] **Step 4: Run focused tests and type checking**
 
-Run: `pnpm db:generate -- --name auth`
+Run: `pnpm vitest run tests/lib/bootstrap tests/lib/logging && pnpm typecheck`
 
-Expected: 在 `drizzle/` 生成包含四张表、外键和三个唯一索引的 SQL。
+Expected: PASS, including mode `0600` and missing-work-root cases.
 
-Run: `pnpm test -- src/db/schema/auth.test.ts && pnpm typecheck`
-
-Expected: PASS。
-
-- [ ] **Step 5: 提交**
+- [ ] **Step 5: Commit and push bootstrap storage**
 
 ```bash
-git add drizzle.config.ts drizzle src/db
-git commit -m "feat: add database and auth schema"
+git add src/lib/bootstrap src/lib/fs src/lib/logging tests/lib/bootstrap tests/lib/logging
+git commit -m "feat: add secure local workspace configuration"
+git push origin HEAD
 ```
 
----
-
-### Task 4: 邮箱密码登录与服务端会话
+### Task 3: SQLite schema、迁移与完整性检查
 
 **Files:**
-- Create: `src/lib/auth.ts`
-- Create: `src/lib/auth-client.ts`
-- Create: `src/lib/session.ts`
-- Create: `src/app/api/auth/[...all]/route.ts`
-- Create: `src/app/(auth)/login/page.tsx`
-- Create: `src/app/(auth)/login/login-form.tsx`
-- Create: `src/app/(auth)/login/login-form.test.tsx`
-- Create: `src/app/(auth)/register/page.tsx`
+- Create: `src/lib/db/schema.ts`, `src/lib/db/client.ts`, `src/lib/db/migrations.ts`, `src/lib/db/types.ts`
+- Test: `tests/lib/db/client.test.ts`, `tests/lib/db/migrations.test.ts`
 
 **Interfaces:**
-- Consumes: `db` 与认证表。
-- Produces: `auth`、`authClient`、`requireSession(): Promise<{ user: { id: string; email: string; name: string } }>`。
+- Produces: `openDatabase(file: string): LocalDatabase`
+- Produces: `migrateDatabase(db: LocalDatabase): void`
+- Produces: `checkDatabase(db: LocalDatabase): { ok: boolean; detail: string }`
+- Produces tables: `settings`, `source_files`, `recognition_jobs`, `invoice_drafts`, `invoices`, `duplicate_matches`, `export_jobs`, `status_events`, `deletion_recoveries`
 
-- [ ] **Step 1: 写登录表单行为测试**
+- [ ] **Step 1: Write the failing lifecycle test**
 
-```tsx
-test("submits email and password", async () => {
-  const signIn = vi.fn().mockResolvedValue({ data: {}, error: null });
-  render(<LoginForm signIn={signIn} />);
-  await userEvent.type(screen.getByLabelText("邮箱"), "me@example.com");
-  await userEvent.type(screen.getByLabelText("密码"), "correct-horse-battery");
-  await userEvent.click(screen.getByRole("button", { name: "登录" }));
-  expect(signIn).toHaveBeenCalledWith({ email: "me@example.com", password: "correct-horse-battery" });
+```ts
+it("opens a WAL database with foreign keys and migrates once", () => {
+  const db = openDatabase(join(tempDir, "workbench.sqlite"));
+  expect(db.sqlite.pragma("journal_mode", { simple: true })).toBe("wal");
+  expect(db.sqlite.pragma("foreign_keys", { simple: true })).toBe(1);
+  expect(db.sqlite.prepare("select version from schema_migrations").get()).toEqual({ version: 1 });
+  expect(checkDatabase(db)).toEqual({ ok: true, detail: "ok" });
+  db.close();
 });
 ```
 
-- [ ] **Step 2: 运行测试验证失败**
+- [ ] **Step 2: Confirm the database test fails**
 
-Run: `pnpm test -- src/app/'(auth)'/login/login-form.test.tsx`
+Run: `pnpm vitest run tests/lib/db`
 
-Expected: FAIL，`LoginForm` 不存在。
+Expected: FAIL because `openDatabase` is not defined.
 
-- [ ] **Step 3: 实现 Better Auth 与登录页面**
+- [ ] **Step 3: Implement schema version 1 and database ownership**
 
-```ts
-// src/lib/auth.ts
-import { betterAuth } from "better-auth/minimal";
-import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { db } from "@/db/client";
-import * as schema from "@/db/schema";
-import { accounts, sessions, users, verifications } from "@/db/schema/auth";
-import { getServerEnv } from "@/config/env";
-
-const env = getServerEnv();
-export const auth = betterAuth({
-  baseURL: env.BETTER_AUTH_URL,
-  secret: env.BETTER_AUTH_SECRET,
-  database: drizzleAdapter(db, {
-    provider: "pg",
-    schema: { ...schema, user: users, session: sessions, account: accounts, verification: verifications },
-  }),
-  emailAndPassword: { enabled: true, minPasswordLength: 10 },
-});
-```
+Define string IDs, ISO timestamps, integer-cent amounts, and checks for `draft|confirmed`, `pending|reimbursing|reimbursed`, and `queued|running|succeeded|failed`. Set:
 
 ```ts
-// src/lib/session.ts
-import { headers } from "next/headers";
-import { redirect } from "next/navigation";
-import { auth } from "./auth";
-
-export async function requireSession() {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) redirect("/login");
-  return session;
-}
+sqlite.pragma("journal_mode = WAL");
+sqlite.pragma("foreign_keys = ON");
+sqlite.pragma("busy_timeout = 5000");
 ```
 
-The API route must export `GET` and `POST` using `toNextJsHandler(auth)`. The client form must expose pending and error states, use `autocomplete="email"` and `autocomplete="current-password"`, and redirect to `/dashboard` only after a successful response.
+Run migrations in `BEGIN IMMEDIATE`. Before any future schema upgrade, use the SQLite backup API to create `backups/pre-migration-<timestamp>.sqlite`.
 
-- [ ] **Step 4: 验证**
+- [ ] **Step 4: Verify schema, constraints, and cents**
 
-Run: `pnpm test -- src/app/'(auth)'/login/login-form.test.tsx && pnpm typecheck && pnpm build`
+Run: `pnpm vitest run tests/lib/db && pnpm typecheck`
 
-Expected: PASS。
+Expected: PASS, including rejection of an invalid reimbursement status and exact storage of `128000` cents.
 
-- [ ] **Step 5: 提交**
+- [ ] **Step 5: Commit and push local persistence**
 
 ```bash
-git add src/lib src/app/api src/app/'(auth)'
-git commit -m "feat: add email password authentication"
+git add src/lib/db tests/lib/db package.json pnpm-lock.yaml
+git commit -m "feat: add sqlite persistence foundation"
+git push origin HEAD
 ```
 
----
-
-### Task 5: 对象存储抽象与 S3 实现
+### Task 4: 可恢复进程内任务队列
 
 **Files:**
-- Create: `src/storage/object-store.ts`
-- Create: `src/storage/memory-object-store.ts`
-- Create: `src/storage/s3-object-store.ts`
-- Create: `src/storage/index.ts`
-- Create: `src/storage/object-store.test.ts`
+- Create: `src/lib/jobs/types.ts`, `src/lib/jobs/queue.ts`, `src/lib/jobs/registry.ts`
+- Test: `tests/lib/jobs/queue.test.ts`
 
 **Interfaces:**
-- Consumes: S3 环境配置。
-- Produces: `ObjectStore`：`put`、`getStream`、`delete`、`signedDownloadUrl`；`getObjectStore(): ObjectStore`。
+- Produces: `JobKind = "recognition" | "export" | "maintenance"`
+- Produces: `LocalJobQueue({ concurrency: 2, store, handlers })`
+- Produces: `enqueue(input: NewJob): Promise<string>`, `start(): void`, `stop(): Promise<void>`, `recover(): Promise<void>`
 
-- [ ] **Step 1: 写对象存储契约测试**
+- [ ] **Step 1: Write failing concurrency and recovery tests**
 
 ```ts
-import { Readable } from "node:stream";
-import { MemoryObjectStore } from "./memory-object-store";
-
-test("stores, reads and deletes a private object", async () => {
-  const store = new MemoryObjectStore();
-  await store.put({ key: "users/u1/a.pdf", body: Buffer.from("invoice"), contentType: "application/pdf" });
-  expect(await streamToBuffer(await store.getStream("users/u1/a.pdf"))).toEqual(Buffer.from("invoice"));
-  await store.delete("users/u1/a.pdf");
-  await expect(store.getStream("users/u1/a.pdf")).rejects.toThrow("OBJECT_NOT_FOUND");
+it("runs at most two jobs and requeues interrupted work", async () => {
+  const harness = createQueueHarness({ concurrency: 2 });
+  await harness.store.seedRunning("old-job");
+  await harness.queue.recover();
+  await Promise.all([1, 2, 3].map((n) => harness.queue.enqueue({ kind: "maintenance", payload: { n } })));
+  await harness.waitForIdle();
+  expect(harness.maxActive).toBe(2);
+  expect(await harness.store.status("old-job")).toBe("succeeded");
 });
 ```
 
-- [ ] **Step 2: 运行测试验证失败**
+- [ ] **Step 2: Run and observe the missing queue failure**
 
-Run: `pnpm test -- src/storage/object-store.test.ts`
+Run: `pnpm vitest run tests/lib/jobs/queue.test.ts`
 
-Expected: FAIL，内存实现不存在。
+Expected: FAIL because queue modules are absent.
 
-- [ ] **Step 3: 实现统一接口和两个适配器**
+- [ ] **Step 3: Implement persisted FIFO state transitions**
 
-```ts
-// src/storage/object-store.ts
-import type { Readable } from "node:stream";
+Use an `AbortController` per active job and one `drain()` loop. Persist `queued → running → succeeded|failed` before notifying listeners. On startup convert stale `running` rows to `queued`; on shutdown stop intake and await active promises.
 
-export interface ObjectStore {
-  put(input: { key: string; body: Buffer; contentType: string }): Promise<void>;
-  getStream(key: string): Promise<Readable>;
-  delete(key: string): Promise<void>;
-  signedDownloadUrl(key: string, expiresInSeconds: number): Promise<string>;
-}
-```
+- [ ] **Step 4: Verify concurrency, recovery, and graceful stop**
 
-`S3ObjectStore` must use `PutObjectCommand`、`GetObjectCommand`、`DeleteObjectCommand` and `getSignedUrl`. It must never set public ACLs. `getObjectStore()` selects the adapter only from validated `OBJECT_STORE_DRIVER`.
+Run: `pnpm vitest run tests/lib/jobs/queue.test.ts && pnpm typecheck`
 
-```ts
-async put(input: { key: string; body: Buffer; contentType: string }) {
-  await this.client.send(new PutObjectCommand({ Bucket: this.bucket, Key: input.key, Body: input.body, ContentType: input.contentType }));
-}
+Expected: PASS with maximum active count 2 and no stale `running` row after recovery.
 
-async signedDownloadUrl(key: string, expiresInSeconds: number) {
-  return getSignedUrl(this.client, new GetObjectCommand({ Bucket: this.bucket, Key: key }), { expiresIn: expiresInSeconds });
-}
-```
-
-- [ ] **Step 4: 验证**
-
-Run: `pnpm test -- src/storage/object-store.test.ts && pnpm typecheck`
-
-Expected: PASS。
-
-- [ ] **Step 5: 提交**
+- [ ] **Step 5: Commit and push the queue**
 
 ```bash
-git add src/storage
-git commit -m "feat: add private object storage boundary"
+git add src/lib/jobs tests/lib/jobs
+git commit -m "feat: add recoverable local job queue"
+git push origin HEAD
 ```
 
----
-
-### Task 6: 受保护的响应式应用外壳
+### Task 5: 启动令牌、健康检查与本地应用上下文
 
 **Files:**
-- Create: `src/app/(workbench)/layout.tsx`
-- Create: `src/app/(workbench)/dashboard/page.tsx`
-- Create: `src/components/workbench-shell.tsx`
-- Create: `src/components/workbench-shell.module.css`
-- Create: `src/components/workbench-shell.test.tsx`
-- Modify: `src/app/page.tsx`
+- Create: `src/lib/security/request-token.ts`, `src/lib/runtime/context.ts`
+- Create: `src/app/api/health/route.ts`, `src/app/api/session/route.ts`, `src/proxy.ts`
+- Test: `tests/lib/security/request-token.test.ts`, `tests/app/api/health.test.ts`
 
 **Interfaces:**
-- Consumes: `requireSession()`。
-- Produces: `/dashboard` 受保护路由；桌面左侧导航和移动底部导航。
+- Produces: `requireLocalMutation(request: Request, runtime: RuntimeInfo): void`
+- Produces: `getRuntimeContext(): RuntimeContext`
+- Produces: `GET /api/health -> { status: "ok"; version: string }`
+- Produces: `POST /api/session` exchanges the launch fragment token for an HttpOnly SameSite=Strict cookie
 
-- [ ] **Step 1: 写导航可访问性测试**
+- [ ] **Step 1: Write failing request-security tests**
 
-```tsx
-test("shows the four primary destinations", () => {
-  render(<WorkbenchShell userName="老孙"><div>内容</div></WorkbenchShell>);
-  for (const name of ["总览", "上传发票", "发票管理", "整理导出"]) {
-    expect(screen.getByRole("link", { name })).toBeInTheDocument();
-  }
+```ts
+it("accepts loopback same-origin requests with the current token only", () => {
+  const runtime = { pid: 1, port: 4876, token: "secret", startedAt: "2026-08-31T00:00:00Z" };
+  expect(() => requireLocalMutation(request("http://127.0.0.1:4876", "secret"), runtime)).not.toThrow();
+  expect(() => requireLocalMutation(request("https://evil.example", "secret"), runtime)).toThrow("INVALID_ORIGIN");
+  expect(() => requireLocalMutation(request("http://127.0.0.1:4876", "wrong"), runtime)).toThrow("INVALID_SESSION");
 });
 ```
 
-- [ ] **Step 2: 运行测试验证失败**
+- [ ] **Step 2: Confirm focused tests fail**
 
-Run: `pnpm test -- src/components/workbench-shell.test.tsx`
+Run: `pnpm vitest run tests/lib/security tests/app/api/health.test.ts`
 
-Expected: FAIL，组件不存在。
+Expected: FAIL because the security and health modules are absent.
 
-- [ ] **Step 3: 实现外壳**
+- [ ] **Step 3: Implement fragment exchange and singleton context**
 
-Use semantic `<nav aria-label="主要导航">` and these exact routes: `/dashboard`、`/upload`、`/invoices`、`/exports`. CSS breakpoint at `760px`: left navigation above the breakpoint, fixed bottom navigation at or below it. The protected layout calls `requireSession()` and passes `session.user.name` to the shell. Root `/` redirects to `/dashboard`.
+Generate 32 random bytes per launch. Open `http://127.0.0.1:<port>/#launch=<base64url>` so the secret is not sent in the HTTP request; client JavaScript posts the fragment once and calls `history.replaceState`. Store an HMAC digest in the HttpOnly cookie and validate mutation origins against the runtime port.
 
-```tsx
-const links = [
-  ["/dashboard", "总览"], ["/upload", "上传发票"], ["/invoices", "发票管理"], ["/exports", "整理导出"],
-] as const;
+- [ ] **Step 4: Run security and route tests**
 
-export function WorkbenchShell({ userName, children }: { userName: string; children: React.ReactNode }) {
-  return <div className={styles.shell}>
-    <aside className={styles.sidebar}><strong>发票工作台</strong><nav aria-label="主要导航">{links.map(([href, label]) => <Link key={href} href={href}>{label}</Link>)}</nav></aside>
-    <main className={styles.content}><span className={styles.userName}>{userName}</span>{children}</main>
-    <nav className={styles.mobileNav} aria-label="主要导航">{links.map(([href, label]) => <Link key={href} href={href}>{label}</Link>)}</nav>
-  </div>;
-}
-```
+Run: `pnpm vitest run tests/lib/security tests/app/api && pnpm typecheck`
 
-- [ ] **Step 4: 验证响应式与构建**
+Expected: PASS; invalid origins and tokens receive 403 and tests never print the token.
 
-Run: `pnpm test -- src/components/workbench-shell.test.tsx && pnpm lint && pnpm typecheck && pnpm build`
-
-Expected: PASS；无横向溢出规则，键盘焦点可见。
-
-- [ ] **Step 5: 提交**
+- [ ] **Step 5: Commit and push API protection**
 
 ```bash
-git add src/app src/components
-git commit -m "feat: add protected responsive workbench shell"
+git add src/lib/security src/lib/runtime src/app/api src/proxy.ts tests/lib/security tests/app/api
+git commit -m "feat: secure local workbench api"
+git push origin HEAD
 ```
 
----
-
-### Task 7: CI 与本地启动说明
+### Task 6: Finder 双击安装、启动与关闭
 
 **Files:**
-- Create: `.github/workflows/ci.yml`
+- Create: `scripts/install.mjs`, `scripts/start.mjs`, `scripts/stop.mjs`
+- Create: `scripts/lib/process.mjs`, `scripts/lib/macos.mjs`
+- Create: `首次安装.command`, `启动发票工作台.command`, `关闭发票工作台.command`
+- Create: `tests/scripts/start.test.ts`, `tests/scripts/process.test.ts`
 - Create: `README.md`
-- Create: `scripts/wait-for-postgres.mjs`
+- Modify: `package.json`
 
 **Interfaces:**
-- Consumes: GitHub Actions PostgreSQL 16 service。
-- Produces: 每次推送执行 install、migration、lint、typecheck、unit test、build。
+- Produces: `findAvailablePort(host, first, last): Promise<number>`
+- Produces: `isRecordedProcessAlive(runtime): Promise<boolean>`
+- Produces: `chooseWorkRoot(defaultPath): Promise<string>` using `osascript`
+- Produces: `pnpm local:install`, `pnpm local:start`, `pnpm local:stop`
 
-- [ ] **Step 1: 写 CI 脚本 smoke test**
+- [ ] **Step 1: Write failing launcher tests**
 
-Create `scripts/wait-for-postgres.mjs` using `pg.Pool` to retry `select 1` for at most 30 seconds and exit non-zero after timeout.
-
-```js
-import pg from "pg";
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 1000 });
-const deadline = Date.now() + 30_000;
-while (Date.now() < deadline) {
-  try { await pool.query("select 1"); await pool.end(); process.exit(0); }
-  catch { await new Promise((resolve) => setTimeout(resolve, 1000)); }
-}
-console.error("PostgreSQL unavailable");
-await pool.end().catch(() => undefined);
-process.exit(1);
+```ts
+it("skips occupied ports and reuses a healthy recorded process", async () => {
+  const occupied = await listenOn("127.0.0.1", 4876);
+  await expect(findAvailablePort("127.0.0.1", 4876, 4885)).resolves.toBe(4877);
+  await occupied.close();
+  await expect(decideStart({ pidAlive: true, healthOk: true })).resolves.toEqual({ action: "open-existing" });
+});
 ```
 
-Run: `DATABASE_URL='postgres://invalid:invalid@127.0.0.1:1/none' node scripts/wait-for-postgres.mjs`
+- [ ] **Step 2: Run launcher tests and verify failure**
 
-Expected: 30 秒内以非零状态退出并打印 `PostgreSQL unavailable`，不得打印连接密码。
+Run: `pnpm vitest run tests/scripts`
 
-- [ ] **Step 2: 创建 CI**
+Expected: FAIL because launcher helpers are missing.
 
-CI must use `actions/checkout`、`pnpm/action-setup` with `9.15.9`、`actions/setup-node` with Node 24 and pnpm cache, plus PostgreSQL 16 service. Set test-only secrets inline in workflow, then run:
+- [ ] **Step 3: Implement deterministic install/start/stop behavior**
 
-```yaml
-- run: pnpm install --frozen-lockfile
-- run: node scripts/wait-for-postgres.mjs
-- run: pnpm db:migrate
-- run: pnpm lint
-- run: pnpm typecheck
-- run: pnpm test
-- run: pnpm build
-```
+The `.command` files resolve their own directory, invoke the matching Node script, show a Chinese error, and wait for Return only on failure. `start.mjs` validates the work root, chooses `4876—4885`, writes `runtime.json` mode 0600, starts `next start -H 127.0.0.1 -p <port>`, polls `/api/health`, then runs `open` with the fragment token. `stop.mjs` verifies PID ownership and health before SIGTERM; it never kills an unrelated PID.
 
-- [ ] **Step 3: 编写本地说明**
+- [ ] **Step 4: Verify launchers and production build**
 
-README must include exact commands `pnpm install`、copy `.env.example` to `.env.local`、create PostgreSQL database、`pnpm db:migrate`、`pnpm dev`; explain that secrets stay local and that no Docker is required.
+Run: `pnpm vitest run tests/scripts && pnpm verify && node scripts/start.mjs --dry-run`
 
-- [ ] **Step 4: 全量验证**
+Expected: PASS; dry run reports a loopback address and work root without starting a process.
 
-Run: `pnpm lint && pnpm typecheck && pnpm test && pnpm build`
+- [ ] **Step 5: Manual Finder smoke test**
 
-Expected: 全部 PASS。
+Double-click `首次安装.command`, then `启动发票工作台.command` twice, then `关闭发票工作台.command`.
 
-- [ ] **Step 5: 提交**
+Expected: first start opens the browser; second start reuses the same PID; close makes `/api/health` unreachable.
+
+- [ ] **Step 6: Commit and push the launchers**
 
 ```bash
-git add .github README.md scripts
-git commit -m "ci: verify foundation and document setup"
+git add package.json pnpm-lock.yaml scripts *.command README.md tests/scripts
+git commit -m "feat: add double-click local launcher"
+git push origin HEAD
+```
+
+### Task 7: 基础阶段端到端门禁
+
+**Files:**
+- Create: `tests/e2e/local-shell.spec.ts`, `tests/fixtures/runtime.ts`
+- Modify: `README.md`
+
+**Interfaces:**
+- Consumes: launcher, health route, session exchange, four-route shell
+- Produces: `pnpm test:e2e --grep @foundation`
+
+- [ ] **Step 1: Write the failing foundation journey**
+
+```ts
+test("@foundation launches a protected responsive workbench", async ({ page }) => {
+  await page.goto(launchUrl);
+  await expect(page.getByRole("heading", { name: "发票工作台" })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole("navigation", { name: "底部导航" })).toBeVisible();
+  expect(await requestFromForeignOrigin("/api/session")).toBe(403);
+});
+```
+
+- [ ] **Step 2: Run the journey and record the first failure**
+
+Run: `pnpm test:e2e --grep @foundation`
+
+Expected: FAIL until the fixture launches with a valid fragment token.
+
+- [ ] **Step 3: Connect the fixture to an isolated temp work root**
+
+Start on an ephemeral allowed port, set `INVOICE_WORKBENCH_TEST_ROOT`, capture the runtime token without printing it, and tear down the exact child PID after the suite.
+
+- [ ] **Step 4: Run the complete foundation gate**
+
+Run: `pnpm verify && pnpm test:e2e --grep @foundation && git diff --check`
+
+Expected: every command exits 0.
+
+- [ ] **Step 5: Commit and push the foundation gate**
+
+```bash
+git add tests/e2e tests/fixtures README.md
+git commit -m "test: cover local workbench foundation"
+git push origin HEAD
 ```
