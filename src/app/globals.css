@@ -1,0 +1,123 @@
+:root {
+  color: #17212b;
+  background: #f6f7f9;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 14rem minmax(0, 1fr);
+  min-height: 100svh;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding: 2rem 1.25rem;
+  background: #ffffff;
+  border-right: 1px solid #d9dde3;
+}
+
+.sidebar .brand {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.sidebar nav,
+.bottom-navigation {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.sidebar a,
+.bottom-navigation a {
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+}
+
+.sidebar a[aria-current="page"],
+.bottom-navigation a[aria-current="page"] {
+  color: #ffffff;
+  background: #166534;
+}
+
+.sidebar p {
+  margin-top: auto;
+  color: #53606d;
+  font-size: 0.875rem;
+}
+
+.workbench-content {
+  max-width: 56rem;
+  padding: 3rem;
+}
+
+.workbench-header {
+  padding: 2rem 3rem 0;
+}
+
+.workbench-header h1 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.workbench-content h2 {
+  margin-top: 0;
+}
+
+.bottom-navigation {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    display: block;
+    padding-bottom: 5rem;
+  }
+
+  .sidebar {
+    display: none;
+  }
+
+  .workbench-content {
+    padding: 1.5rem;
+  }
+
+  .workbench-header {
+    padding: 1.5rem 1.5rem 0;
+  }
+
+  .bottom-navigation {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0;
+    padding: 0.5rem;
+    background: #ffffff;
+    border-top: 1px solid #d9dde3;
+  }
+
+  .bottom-navigation a {
+    padding: 0.5rem 0.25rem;
+    text-align: center;
+    font-size: 0.75rem;
+  }
+}

@@ -1,2 +1,12 @@
 .worktrees/
 .superpowers/
+node_modules/
+.next/
+next-env.d.ts
+*.tsbuildinfo
+out/
+coverage/
+playwright-report/
+test-results/
+.env*
+!.env.example
